@@ -29,6 +29,12 @@ typedef uint32_t u32;
 #define showcur() fputs("\033[?25h", stdout)
 #define gotoxy(x,y) fprintf(stdout, "\033[%d;%dH", (y), (x))
 
+#define be_to_le_u32(be)  \
+    ((be << 24) & 0xff000000) |    \
+    ((be << 8)  & 0xff0000)   |    \
+    ((be >> 8)  & 0xff00)     |    \
+    be >> 24;
+
 #define MENU_HEAD_W 21
 
 enum CHOICE {
@@ -49,6 +55,7 @@ void print_menu(char *title, char *message, char *options[], int opt_len, int wi
 int main_menu(void);
 int add_directory(void);
 int process_dir(char *dir_path);
+int is_mp4(char *filepath);
 
 int main(int argc, char **argv)
 {
@@ -275,9 +282,71 @@ int process_dir(char *dir_path)
 
             strncat(filepath, current->d_name, filename_len);
 
+            if (!is_mp4(filepath)) {
+                printf("[DEBUG] File is not an mp4\n");
+                continue;
+            }
+
+            printf("[DEBUG] File is an mp4\n");
+
+            // TODO: Store file details
+            // - Should stored path be relative to `root` or full?
+
             printf("\n");
         }
     }
 
     return 0;
+}
+
+struct MP4_Head {
+    u32 offset;
+    char ftyp[4];
+    char major_brand[4];
+    u32 major_brand_ver;
+};
+
+/*
+ * Return:
+ *   1: File is an mp4
+ *   0: File is not an mp4
+ *  -1: Failed to open file
+ */
+int is_mp4(char *filepath)
+{
+    FILE *f = fopen(filepath, "r");
+    if (!f)
+        return -1;
+
+    // [see: ./_REF/mp4-layout.txt : https://xhelmboyx.tripod.com/formats/mp4-layout.txt]
+    // TODO: Make sure we have enough to recognise an mp4
+    struct MP4_Head header;
+    fread(&header, sizeof(header), 1, f);
+
+    header.offset = be_to_le_u32(header.offset);
+    header.major_brand_ver = be_to_le_u32(header.major_brand_ver);
+
+    if (strncmp(header.ftyp, "ftyp", 4) != 0) {
+        return 0;
+    }
+
+    // TODO: "3gp" may have varied single ASCII 4th char. Confirm
+    // - Confirm before using
+    // - If using, how to match?
+    char *brands[] = {"isom", "iso2", "mp41", "mp42", "qt  ", "avc1", "mmp4", "mp71"};
+
+    u8 match = 0;
+    for (int i = 0, len = sizeof(brands) / sizeof(*brands); i < len; i++) {
+        if (strncmp(header.major_brand, brands[i], 4) == 0) {
+            match = 1;
+            break;
+        }
+    }
+
+    //printf("[DEBUG] Offset: %d\n", header.offset);
+    //printf("[DEBUG] ftyp: %.4s\n", header.ftyp);
+    //printf("[DEBUG] Major Brand: %.4s\n", header.major_brand);
+    //printf("[DEBUG] Major Brand Version: %d\n", header.major_brand_ver);
+
+    return match;
 }
