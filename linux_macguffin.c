@@ -15,6 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/types.h>
+#include <dirent.h>
+
 typedef char byte;
 typedef uint8_t u8;
 typedef uint32_t u32;
@@ -45,6 +48,7 @@ int get_input(char *buf, size_t len);
 void print_menu(char *title, char *message, char *options[], int opt_len, int width);
 int main_menu(void);
 int add_directory(void);
+int process_dir(char *dir_path);
 
 int main(int argc, char **argv)
 {
@@ -187,7 +191,93 @@ int main_menu(void)
     return choice;
 }
 
+/*
+ * Return:
+ *  -1: Buffer exceeded. Abort
+ *  -2: Invalid directory path
+ */
 int add_directory(void)
 {
+    clear_screen();
+
+    // TODO:
+    // - Should we limit the path length?
+    //   or should this be dynamic?
+    // - Tab completion (not so trivial... ?)
+    print_menu("Add Directory", "Enter full path", NULL, 0, MENU_HEAD_W);
+    printf("> ");
+
+    char path_buffer[256];
+    u8 chk = get_input(path_buffer, sizeof(path_buffer));
+
+    if (chk == 0) {
+        printf("Input exceeded the buffer size. Aborting\n");
+        return -1;
+    }
+
+    process_dir(path_buffer);
+
+    return 0;
+}
+
+/*
+ * Return:
+ * -1: Failed to open directory
+ */
+int process_dir(char *dir_path)
+{
+    // TODO:
+    // - Recursively search directory
+    // - Store all video files (of supported filetype(s))
+    //   - only .mp4 and .mkv initially
+    printf("Processing...\n");
+
+    DIR *root_dir = opendir(dir_path);
+    if (!root_dir) {
+        perror("Failed to open directory path");
+        return -1;
+    }
+
+    struct dirent *current;
+    char *filetype;
+
+    while ((current = readdir(root_dir))) {
+        // Ignore current dir, parent dir and all hidden files
+        if (*current->d_name == '.')
+            continue;
+        if (current->d_type == DT_DIR) {
+            // TODO: Add to stack for later recursion
+            filetype = "Directory";
+        } else if (current->d_type == DT_REG) {
+            // TODO:
+            // - Check to see if matches our valid video type(s)
+            filetype = "Regular file";
+
+            printf("%s: %s\n", current->d_name, filetype);
+
+            // TODO: Handle any lack of trailing '/' only once,
+            // not for every file!
+            size_t filename_len = strlen(current->d_name);
+            size_t dir_path_len = strlen(dir_path);
+
+            u8 add_trailing_slash = 0;
+            if (dir_path[dir_path_len - 1] != '/') {
+                add_trailing_slash = 1;
+            }
+
+            char filepath[dir_path_len + add_trailing_slash + filename_len + 1];
+            strncpy(filepath, dir_path, dir_path_len + 1);
+
+            if (add_trailing_slash) {
+                filepath[dir_path_len] = '/';
+                filepath[dir_path_len + 1] = '\0';
+            }
+
+            strncat(filepath, current->d_name, filename_len);
+
+            printf("\n");
+        }
+    }
+
     return 0;
 }
