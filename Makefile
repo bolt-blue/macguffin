@@ -1,6 +1,19 @@
 CFLAGS ?= -Wall -g -O0
 
-all: macguffin
+APP = macguffin
+SOURCES = $(wildcard src/*.c)
+OBJECTS = $(patsubst %.c, %.o, $(SOURCES))
 
-macguffin: linux_macguffin.c
-	$(CC) $(CFLAGS) $^ -o $@
+all: $(APP)
+
+$(APP): $(OBJECTS)
+	$(CC) $(CFLAGS) $(OBJECTS) -o $@
+
+$(OBJECTS): %.o : %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%.o: %.c
+
+clean:
+	rm -f $(OBJECTS)
+	rm -f $(APP)

@@ -10,7 +10,6 @@
 //   - [create new fields as necessary]
 
 #include <ctype.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,22 +17,8 @@
 #include <sys/types.h>
 #include <dirent.h>
 
-typedef char byte;
-typedef uint8_t u8;
-typedef uint32_t u32;
-
-#define reset_colour() fputs("\033[0m", stdout);
-#define reset() fputs("\033[2J", stdout)
-#define clear_screen() fputs("\033[H\033[J", stdout)
-#define hidecur() fputs("\033[?25l", stdout)
-#define showcur() fputs("\033[?25h", stdout)
-#define gotoxy(x,y) fprintf(stdout, "\033[%d;%dH", (y), (x))
-
-#define be_to_le_u32(be)  \
-    ((be << 24) & 0xff000000) |    \
-    ((be << 8)  & 0xff0000)   |    \
-    ((be >> 8)  & 0xff00)     |    \
-    be >> 24;
+#include "stack.h"
+#include "util.h"
 
 #define MENU_HEAD_W 21
 
@@ -54,7 +39,8 @@ int get_input(char *buf, size_t len);
 void print_menu(char *title, char *message, char *options[], int opt_len, int width);
 int main_menu(void);
 int add_directory(void);
-int process_dir(char *dir_path);
+int process_dir(char *path);
+char *push_dir_path(struct Stack *stack, char *parent, char *path);
 int is_mp4(char *filepath);
 
 int main(int argc, char **argv)
@@ -231,72 +217,109 @@ int add_directory(void)
  * Return:
  * -1: Failed to open directory
  */
-int process_dir(char *dir_path)
+int process_dir(char *path)
 {
     // TODO:
     // - Recursively search directory
     // - Store all video files (of supported filetype(s))
     //   - only .mp4 and .mkv initially
-    printf("Processing...\n");
 
-    DIR *root_dir = opendir(dir_path);
-    if (!root_dir) {
-        perror("Failed to open directory path");
-        return -1;
+    // NOTE: Stack is limited in size
+    // TODO: When full, batch process and clear before re-populating?
+    struct Stack dirs = stack_init(MB(1));
+    {
+        push_dir_path(&dirs, NULL, path);
     }
 
-    struct dirent *current;
-    char *filetype;
+    while (dirs.size) {
+        char *popped_path = (char *)stack_pop(&dirs);
+        u32 current_dir_path_len = strlen(popped_path);
+        char current_dir_path[current_dir_path_len + 1];
+        // NOTE: Have to store popped path separately, so further pushes
+        // to the directory stack does not clobber it
+        strncpy(current_dir_path, popped_path, current_dir_path_len + 1);
 
-    while ((current = readdir(root_dir))) {
-        // Ignore current dir, parent dir and all hidden files
-        if (*current->d_name == '.')
+        printf("=== Processing: %s ...\n\n", current_dir_path);
+
+        DIR *current_dir = opendir(current_dir_path);
+        if (!current_dir) {
+            // TODO: @logging
+            perror("Failed to open directory path");
+            fprintf(stderr, "%s\n", current_dir_path);
             continue;
-        if (current->d_type == DT_DIR) {
-            // TODO: Add to stack for later recursion
-            filetype = "Directory";
-        } else if (current->d_type == DT_REG) {
-            // TODO:
-            // - Check to see if matches our valid video type(s)
-            filetype = "Regular file";
-
-            printf("%s: %s\n", current->d_name, filetype);
-
-            // TODO: Handle any lack of trailing '/' only once,
-            // not for every file!
-            size_t filename_len = strlen(current->d_name);
-            size_t dir_path_len = strlen(dir_path);
-
-            u8 add_trailing_slash = 0;
-            if (dir_path[dir_path_len - 1] != '/') {
-                add_trailing_slash = 1;
-            }
-
-            char filepath[dir_path_len + add_trailing_slash + filename_len + 1];
-            strncpy(filepath, dir_path, dir_path_len + 1);
-
-            if (add_trailing_slash) {
-                filepath[dir_path_len] = '/';
-                filepath[dir_path_len + 1] = '\0';
-            }
-
-            strncat(filepath, current->d_name, filename_len);
-
-            if (!is_mp4(filepath)) {
-                printf("[DEBUG] File is not an mp4\n");
-                continue;
-            }
-
-            printf("[DEBUG] File is an mp4\n");
-
-            // TODO: Store file details
-            // - Should stored path be relative to `root` or full?
-
-            printf("\n");
         }
+
+        struct dirent *current_file;
+
+        while ((current_file = readdir(current_dir))) {
+            // Ignore current dir, parent dir and all hidden files
+            if (*current_file->d_name == '.')
+                continue;
+
+            if (current_file->d_type == DT_DIR) {
+                // Push full path
+                char *tmp = push_dir_path(&dirs, current_dir_path, current_file->d_name);
+                printf("[DEBUG] Found directory - pushing to stack: %s\n\n", tmp);
+
+            } else if (current_file->d_type == DT_REG) {
+                // TODO:
+                // - Check to see if matches our valid video type(s)
+                size_t filename_len = strlen(current_file->d_name);
+
+                char filepath[current_dir_path_len + filename_len + 1];
+                strncpy(filepath, current_dir_path, current_dir_path_len + 1);
+                strncat(filepath, current_file->d_name, filename_len);
+
+                printf("[DEBUG] Found regular file - checking if mp4: %s\n", filepath);
+
+                // TODO: Push to a file stack, for bulk processing after
+                if (!is_mp4(filepath)) {
+                    printf("[DEBUG] File is not an mp4\n\n");
+                    continue;
+                }
+                printf("[DEBUG] FOUND mp4\n\n");
+
+                // TODO: Store file details
+                // - Should stored path be relative to `root` or full?
+            }
+        }
+
+        closedir(current_dir);
     }
 
+    stack_free(&dirs);
     return 0;
+}
+
+/*
+ * Push a directory path onto a stack
+ * Guarantee trailing /
+ */
+char *push_dir_path(struct Stack *stack, char *parent, char *path)
+{
+    size_t parent_len = 0;
+    size_t path_len = strlen(path);
+    u8 add_trailing_slash = 0;
+
+    if (parent)
+        parent_len = strlen(parent);
+
+    if (path[path_len - 1] != '/') {
+        add_trailing_slash = 1;
+    }
+
+    // TODO: How to handle situation if stack is full?
+    char *pushed = stack_push(stack, parent_len + path_len + add_trailing_slash + 1);
+    if (parent)
+        memcpy(pushed, parent, parent_len);
+    memcpy(pushed + parent_len, path, path_len + 1);
+
+    if (add_trailing_slash) {
+        pushed[parent_len + path_len] = '/';
+        pushed[parent_len + path_len + 1] = '\0';
+    }
+
+    return pushed;
 }
 
 struct MP4_Head {
@@ -322,9 +345,10 @@ int is_mp4(char *filepath)
     // TODO: Make sure we have enough to recognise an mp4
     struct MP4_Head header;
     fread(&header, sizeof(header), 1, f);
+    fclose(f);
 
-    header.offset = be_to_le_u32(header.offset);
-    header.major_brand_ver = be_to_le_u32(header.major_brand_ver);
+    header.offset = endswap32(header.offset);
+    header.major_brand_ver = endswap32(header.major_brand_ver);
 
     if (strncmp(header.ftyp, "ftyp", 4) != 0) {
         return 0;
