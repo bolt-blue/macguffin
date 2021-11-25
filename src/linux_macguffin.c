@@ -14,6 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <unistd.h>
+#include <termios.h>
+
 #include <sys/types.h>
 #include <dirent.h>
 
@@ -39,6 +42,7 @@ enum CHOICE {
 //   - show main menu
 int get_input(char *buf, size_t len);
 void print_menu(char *title, char *message, char *options[], int opt_len, int width);
+void await_user(void);
 int main_menu(void);
 int add_directory(void);
 int process_dir(char *path);
@@ -141,6 +145,31 @@ void print_menu(char *title, char *message, char *options[], int opt_len, int wi
             printf("%d. %s\n", i + 1, options[i]);
         }
     }
+}
+
+void await_user(void)
+{
+    struct termios ttystate;
+    tcgetattr(STDIN_FILENO, &ttystate);
+
+    // NOTE: Canonical mode
+    // - When enabled (default), reads will wait for 'Enter' keypress
+    // - When disabled, reads will process immediately
+
+    // Enable immediate read from stdin
+    ttystate.c_lflag &= ~ICANON;
+    // Read after single byte received
+    ttystate.c_cc[VMIN] = 1;
+    // Update terminal attributes
+    tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
+
+    printf("Press any key to continue...\n");
+    fgetc(stdin);
+
+    // Reset to default behaviour
+    ttystate.c_lflag |= ICANON;
+    tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
+    return;
 }
 
 int main_menu(void)
@@ -301,6 +330,8 @@ int process_dir(char *path)
         }
         printf("[DEBUG] End of files\n");
     }
+
+    await_user();
 
     // Clean up
     // TODO: Save strings to persistent storage
