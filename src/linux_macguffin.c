@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 
+#include "dynarr.h"
 #include "stack.h"
 #include "util.h"
 #include "video_detect.h"
@@ -220,16 +221,14 @@ int add_directory(void)
 int process_dir(char *path)
 {
     // TODO:
-    // - Recursively search directory
     // - Store all video files (of supported filetype(s))
     //   - only .mp4 and .mkv initially
 
     // NOTE: Stack is limited in size
     // TODO: When full, batch process and clear before re-populating?
+    struct Stack potentials = stack_init(MB(1));
     struct Stack dirs = stack_init(MB(1));
-    {
-        push_dir_path(&dirs, NULL, path);
-    }
+    push_dir_path(&dirs, NULL, path);
 
     while (dirs.size) {
         char *popped_path = (char *)stack_pop(&dirs);
@@ -239,7 +238,7 @@ int process_dir(char *path)
         // to the directory stack do not clobber it
         strncpy(current_dir_path, popped_path, current_dir_path_len + 1);
 
-        printf("=== Processing: %s ...\n\n", current_dir_path);
+        printf("=== Processing: %s\n", current_dir_path);
 
         DIR *current_dir = opendir(current_dir_path);
         if (!current_dir) {
@@ -257,37 +256,56 @@ int process_dir(char *path)
                 continue;
 
             if (current_file->d_type == DT_DIR) {
-                // Push full path
-                char *tmp = push_dir_path(&dirs, current_dir_path, current_file->d_name);
-                printf("[DEBUG] Found directory - pushing to stack: %s\n\n", tmp);
+                push_dir_path(&dirs, current_dir_path, current_file->d_name);
 
             } else if (current_file->d_type == DT_REG) {
-                // TODO:
-                // - Check to see if matches our valid video type(s)
+                // Store for later bulk checking
+                // NOTE: All paths stored in full for simplicity.
+                // We don't really care about directory structure, just files.
+                // This may change at a later stage.
                 size_t filename_len = strlen(current_file->d_name);
+                char *filepath = stack_push(&potentials, current_dir_path_len + filename_len + 1);
 
-                char filepath[current_dir_path_len + filename_len + 1];
                 strncpy(filepath, current_dir_path, current_dir_path_len + 1);
                 strncat(filepath, current_file->d_name, filename_len);
-
-                printf("[DEBUG] Found regular file - checking if mp4: %s\n", filepath);
-
-                // TODO: Push to a file stack, for bulk processing after
-                if (!is_mp4(filepath)) {
-                    printf("[DEBUG] File is not an mp4\n\n");
-                    continue;
-                }
-                printf("[DEBUG] FOUND mp4\n\n");
-
-                // TODO: Store file details
-                // - Should stored path be relative to `root` or full?
             }
         }
 
         closedir(current_dir);
     }
 
+    struct Stack strings = stack_init(MB(1));
+    struct DynArr video_files = dynarr_init(sizeof(char *), MB(1));
+    char *potential;
+
+    while ((potential = stack_pop(&potentials))) {
+        u32 filename_len = strlen(potential) + 1;
+
+        if (is_mp4(potential)) {
+            char *filename = stack_push(&strings, filename_len);
+            strncpy(filename, potential, filename_len);
+            dynarr_add(&video_files, &filename);
+        }
+    }
+
+    // Clean up temporary data
+    stack_free(&potentials);
     stack_free(&dirs);
+
+    // @debug
+    if (video_files.size) {
+        printf("[DEBUG] Video files found:\n");
+        for (int i = 0; i < video_files.size; i++) {
+            char *filename = *((char **)dynarr_at(&video_files, i));
+            printf("\t%s\n", filename);
+        }
+        printf("[DEBUG] End of files\n");
+    }
+
+    // Clean up
+    // TODO: Save strings to persistent storage
+    dynarr_free(&video_files);
+    stack_free(&strings);
     return 0;
 }
 
