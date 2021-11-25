@@ -9,11 +9,13 @@ all: $(APP)
 $(APP): $(OBJECTS)
 	$(CC) $(CFLAGS) $(OBJECTS) -o $@
 
-$(OBJECTS): %.o : %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+DEPS := $(OBJECTS:.o=.d)
+-include $(DEPS)
 
-%.o: %.c
+$(OBJECTS): %.o : %.c
+	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o,%.d,$@) -c $< -o $@
 
 clean:
 	rm -f $(OBJECTS)
+	rm -f $(DEPS)
 	rm -f $(APP)
