@@ -9,11 +9,18 @@ typedef char byte;
 typedef uint8_t u8;
 typedef uint32_t u32;
 
+/*
+ * Crash on bad input during development
+ */
+#ifndef NDEBUG
 #define ASSERT(exp) \
     if (!(exp)) { \
         fprintf(stderr, "[ASSERTION] (%s:%d:%s)\n", __FILE__, __LINE__, __func__); \
         *(volatile int *)0 = 0; \
     }
+#else
+#define ASSERT(exp)
+#endif
 
 #define KB(v) ((v) * 1024)
 #define MB(v) ((v) * 1024 * 1024)
