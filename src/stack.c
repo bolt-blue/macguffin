@@ -12,8 +12,6 @@ stack_init(u32 capacity)
 {
     struct Stack s;
     s.base = malloc(capacity);
-    s.top = s.base;
-    s.max = s.base + capacity;
     s.size = 0;
     s.capacity = capacity;
     return s;
@@ -24,8 +22,6 @@ stack_free(struct Stack *s)
 {
     free(s->base);
     s->base = NULL;
-    s->top = NULL;
-    s->max = NULL;
     s->size = 0;
     s->capacity = 0;
 }

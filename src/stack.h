@@ -6,8 +6,6 @@
 
 struct Stack {
     u8 *base;
-    u8 *top;
-    u8 *max;
     u32 size;
     u32 capacity;
 };
