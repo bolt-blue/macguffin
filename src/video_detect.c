@@ -44,15 +44,20 @@ struct BMFF_Filetype_Box {
  */
 int is_mp4(char *filepath)
 {
-    FILE *f = fopen(filepath, "r");
-    if (!f)
-        return 0;
-
     // [see: ./_REF/mp4-layout.txt : https://xhelmboyx.tripod.com/formats/mp4-layout.txt]
     // TODO: Make sure we have enough to recognise an mp4
     struct BMFF_Filetype_Box header;
-    fread(&header, sizeof(header), 1, f);
-    fclose(f);
+
+    {
+        FILE *f = fopen(filepath, "r");
+        if (!f)
+            return 0;
+        u32 amount_read = fread(&header, 1, sizeof(header), f);
+        fclose(f);
+        // Files smaller than the header are clearly not .mp4's
+        if (amount_read < sizeof(header))
+            return 0;
+    }
 
     header.box.size = endswap32(header.box.size);
     header.minor_version = endswap32(header.minor_version);
