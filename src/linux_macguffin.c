@@ -80,12 +80,12 @@ EXIT:
 
 /*
  * Returns:
- * 1: newline found, clean input
- * 0: newline not found, text remains in buffer
+ *  i: Success; length of input read
+ * -1: Failure; newline not found
  */
 int get_input(char *buf, size_t len)
 {
-    u8 status = 0;
+    i32 status = -1;
 
     fgets(buf, len, stdin);
 
@@ -93,13 +93,13 @@ int get_input(char *buf, size_t len)
     for (int i = 0; i < len; i++) {
         if (buf[i] == '\n') {
             buf[i] = '\0';
-            status = 1;
+            status = i;
             break;
         }
     }
 
     // If unclean, clear whatever remains in stdin buffer
-    if (status == 0) {
+    if (status == -1) {
         u8 cleared = 0;
         do {
             char tmp[64];
@@ -216,35 +216,40 @@ int main_menu(void)
 
 /*
  * Return:
- *  -1: Buffer exceeded. Abort
- *  -2: Invalid directory path
+ *   0: Success
+ *  -1: Path too long for buffer
+ *  -2: Failure during processing
  */
 int add_directory(void)
 {
-    clear_screen();
-
-    // TODO:
-    // - Should we limit the path length?
-    //   or should this be dynamic?
-    // - Tab completion (not so trivial... ?)
-    print_menu("Add Directory", "Enter full path", NULL, 0, MENU_HEAD_W);
-    printf("> ");
-
+    // TODO: Make this dynamic
     char path_buffer[256];
-    u8 chk = get_input(path_buffer, sizeof(path_buffer));
+    u32 path_len;
 
-    if (chk == 0) {
-        printf("Input exceeded the buffer size. Aborting\n");
-        return -1;
-    }
+    do {
+        clear_screen();
 
-    process_dir(path_buffer);
+        // TODO: Tab completion (not so trivial... ?)
+        print_menu("Add Directory", "Enter full path", NULL, 0, MENU_HEAD_W);
+        printf("> ");
+
+        if ((path_len = get_input(path_buffer, sizeof(path_buffer))) == -1) {
+            printf("Path length exceeded the buffer size. Aborting\n");
+            return -1;
+        }
+    } while (path_len == 0);
+
+    // TODO: Only process directories that are not already being tracked
+    // NOTE: Passing an empty string gets (wrongly, imo) interpreted as `/`
+    if (process_dir(path_buffer) == -1)
+        return -2;
 
     return 0;
 }
 
 /*
  * Return:
+ *  0: Success
  * -1: Failed to open directory
  */
 int process_dir(char *path)
@@ -262,6 +267,9 @@ int process_dir(char *path)
     while (dirs.size) {
         char *popped_path = (char *)stack_pop(&dirs);
         u32 current_dir_path_len = strlen(popped_path);
+        // NOTE: This is only going to be handling data that's coming out of
+        // `dirent` and so should be safe from things like stack smashing
+        // TODO: Confirm this
         char current_dir_path[current_dir_path_len + 1];
         // NOTE: Have to store popped path separately, so further pushes
         // to the directory stack do not clobber it
