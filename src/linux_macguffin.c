@@ -9,6 +9,8 @@
 // - Write any changes to metadata
 //   - [create new fields as necessary]
 
+#include "macguffin.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,25 +29,19 @@
 
 #define MENU_HEAD_W 21
 
-enum CHOICE {
-    SEARCH = 0x1,
-    BROWSE,
-    DIRADD,
-    QUIT
-};
-
 // TODO:
 // - Print error message function
 //   - clear screen
 //   - print message
 //   - await keypress
 //   - show main menu
+// - Separate out CLI functions
 int get_input(char *buf, size_t len);
 void print_menu(char *title, char *message, char *options[], int opt_len, int width);
 void await_user(void);
 int main_menu(void);
-int add_directory(void);
-int process_dir(char *path);
+int add_directory(struct AppState *state);
+int process_dir(struct AppState *state, char *path);
 char *push_dir_path(struct Stack *stack, char *parent, char *path);
 
 int main(int argc, char **argv)
@@ -54,6 +50,13 @@ int main(int argc, char **argv)
     // - Parse args ?
     //   ~ gui mode
     // - Call into core code as a service
+
+    // Setup memory
+    // TODO: Have only one syscall allocation for the whole process
+    // - Handle sub-allocations ourselves
+    struct AppState state;
+    state.strings = stack_init(MB(1));
+    state.videos = dynarr_init(sizeof(struct Video), MB(1));
 
     while (1) {
         clear_screen();
@@ -64,7 +67,7 @@ int main(int argc, char **argv)
             case BROWSE:
                 break;
             case DIRADD:
-                add_directory();
+                add_directory(&state);
                 break;
             case QUIT:
                 goto EXIT;
@@ -72,7 +75,10 @@ int main(int argc, char **argv)
     }
 
 EXIT:
-    // TODO: Any necessary clean up
+    // Clean up
+    // TODO: Save strings to persistent storage
+    dynarr_free(&state.videos);
+    stack_free(&state.strings);
     clear_screen();
 
     return 0;
@@ -220,7 +226,7 @@ int main_menu(void)
  *  -1: Path too long for buffer
  *  -2: Failure during processing
  */
-int add_directory(void)
+int add_directory(struct AppState *state)
 {
     // TODO: Make this dynamic
     char path_buffer[256];
@@ -241,7 +247,7 @@ int add_directory(void)
 
     // TODO: Only process directories that are not already being tracked
     // NOTE: Passing an empty string gets (wrongly, imo) interpreted as `/`
-    if (process_dir(path_buffer) == -1)
+    if (process_dir(state, path_buffer) == -1)
         return -2;
 
     return 0;
@@ -252,7 +258,7 @@ int add_directory(void)
  *  0: Success
  * -1: Failed to open directory
  */
-int process_dir(char *path)
+int process_dir(struct AppState *state, char *path)
 {
     // TODO:
     // - Store all video files (of supported filetype(s))
@@ -275,7 +281,7 @@ int process_dir(char *path)
         // to the directory stack do not clobber it
         strncpy(current_dir_path, popped_path, current_dir_path_len + 1);
 
-        printf("=== Processing: %s\n", current_dir_path);
+        printf("=== Processing directory: %s\n", current_dir_path);
 
         DIR *current_dir = opendir(current_dir_path);
         if (!current_dir) {
@@ -311,17 +317,26 @@ int process_dir(char *path)
         closedir(current_dir);
     }
 
-    struct Stack strings = stack_init(MB(1));
-    struct DynArr video_files = dynarr_init(sizeof(char *), MB(1));
+    struct Stack *strings = &state->strings;
+    struct DynArr *video_files = &state->videos;
     char *potential;
 
     while ((potential = stack_pop(&potentials))) {
-        u32 filename_len = strlen(potential) + 1;
+        printf("=== Processing file: %s\n", potential);
 
+        u32 filepath_len = strlen(potential) + 1;
+
+        // TODO:
+        // - Multi-thread this
+        // - Attempt to extract meta data; at least for:
+        //   - title
+        //   - year
+        //   - duration
         if (is_mp4(potential)) {
-            char *filename = stack_push(&strings, filename_len);
-            strncpy(filename, potential, filename_len);
-            dynarr_add(&video_files, &filename);
+            struct Video video = {0};
+            video.filepath = stack_push(strings, filepath_len);
+            strncpy(video.filepath, potential, filepath_len);
+            dynarr_add(video_files, &video);
         }
     }
 
@@ -330,21 +345,18 @@ int process_dir(char *path)
     stack_free(&dirs);
 
     // @debug
-    if (video_files.size) {
-        printf("[DEBUG] Video files found:\n");
-        for (int i = 0; i < video_files.size; i++) {
-            char *filename = *((char **)dynarr_at(&video_files, i));
-            printf("\t%s\n", filename);
+    if (video_files->size) {
+        printf("[DEBUG] Currently tracked files:\n");
+        for (int i = 0; i < video_files->size; i++) {
+            struct Video *video = (struct Video *)dynarr_at(video_files, i);
+            printf("\t%s\n", video->filepath);
         }
         printf("[DEBUG] End of files\n");
+        printf("[DEBUG] Tracking %d files\n", video_files->size);
     }
 
     await_user();
 
-    // Clean up
-    // TODO: Save strings to persistent storage
-    dynarr_free(&video_files);
-    stack_free(&strings);
     return 0;
 }
 

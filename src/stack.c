@@ -29,6 +29,8 @@ stack_free(struct Stack *s)
 /*
  * Reserve space on the stack
  * size: in bytes
+ * Return:
+ * - Pointer to the beginning of a suitably sized memory region
  */
 void *
 stack_push(struct Stack *stack, u32 size)
@@ -36,12 +38,9 @@ stack_push(struct Stack *stack, u32 size)
     // TODO: Account for alignment when placing entry_tail struct
     u32 total_size = size + sizeof(struct entry_tail);
 
-#if 0
+    ASSERT(stack->size + total_size <= stack->capacity);
     if (stack->size + total_size > stack->capacity)
         return NULL;
-#else
-    ASSERT(stack->size + total_size <= stack->capacity);
-#endif
 
     u8 *pushed = stack->base + stack->size;
     struct entry_tail *tail = (void *)(pushed + size);
