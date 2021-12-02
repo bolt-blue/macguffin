@@ -38,11 +38,12 @@
 // - Separate out CLI functions
 int get_input(char *buf, size_t len);
 void print_menu(char *title, char *message, char *options[], int opt_len, int width);
-void await_user(void);
+char await_user(char *prompt);
 int main_menu(void);
 int add_directory(struct AppState *state);
 int process_dir(struct AppState *state, char *path);
 char *push_dir_path(struct Stack *stack, char *parent, char *path);
+void browse(struct AppState *state);
 
 int main(int argc, char **argv)
 {
@@ -65,6 +66,7 @@ int main(int argc, char **argv)
             case SEARCH:
                 break;
             case BROWSE:
+                browse(&state);
                 break;
             case DIRADD:
                 add_directory(&state);
@@ -153,7 +155,7 @@ void print_menu(char *title, char *message, char *options[], int opt_len, int wi
     }
 }
 
-void await_user(void)
+char await_user(char *prompt)
 {
     struct termios ttystate;
     tcgetattr(STDIN_FILENO, &ttystate);
@@ -169,13 +171,13 @@ void await_user(void)
     // Update terminal attributes
     tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
 
-    printf("Press any key to continue...\n");
-    fgetc(stdin);
+    printf("%s", prompt);
+    char key = fgetc(stdin);
 
     // Reset to default behaviour
     ttystate.c_lflag |= ICANON;
     tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
-    return;
+    return key;
 }
 
 int main_menu(void)
@@ -355,7 +357,7 @@ int process_dir(struct AppState *state, char *path)
         printf("[DEBUG] Tracking %d files\n", video_files->size);
     }
 
-    await_user();
+    await_user("Press any key to continue...\n");
 
     return 0;
 }
@@ -389,4 +391,48 @@ char *push_dir_path(struct Stack *stack, char *parent, char *path)
     }
 
     return pushed;
+}
+
+void browse(struct AppState *state)
+{
+    u32 cur = 0;
+    struct DynArr videos = state->videos;
+
+    if (!videos.size)
+        return;
+
+    u8 running = 1;
+    while(running) {
+        clear_screen();
+
+        struct Video *v = dynarr_at(&videos, cur);
+        printf("q: Main menu\n\n");
+        printf("Title: %s\n", v->title);
+        printf("Year: %d\n", v->year);
+        printf("Duration: %d\n", v->duration);
+        printf("Filepath: %s\n\n", v->filepath);
+        printf("<-- | -->\n");
+        printf("a/h | d/l\n");
+
+        unsigned char key = await_user("");
+        switch (key) {
+            case 'a':
+            case 'h':
+                if (cur > 0)
+                    cur--;
+                else
+                    cur = videos.size - 1;
+                break;
+            case 'd':
+            case 'l':
+                if (cur < videos.size - 1)
+                    cur++;
+                else
+                    cur = 0;
+                break;
+            case 'q':
+                running = 0;
+                break;
+        }
+    }
 }
