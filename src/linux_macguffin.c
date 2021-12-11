@@ -28,6 +28,11 @@
 #include "video_detect.h"
 
 #define MENU_HEAD_W 21
+// TODO: Store these in a config file
+#define DATADIR "data/"
+#define DATAFILE DATADIR "store"
+// TODO: Make this dynamic
+#define MAX_STR_LEN 256
 
 // TODO:
 // - Print error message function
@@ -36,11 +41,11 @@
 //   - await keypress
 //   - show main menu
 // - Separate out CLI functions
-int get_input(char *buf, size_t len);
+// - Separate out non-platform-specific code
+internal int get_input(char *buf, size_t len);
 void print_menu(char *title, char *message, char *options[], int opt_len, int width);
-char await_user(char *prompt);
+internal char await_user(char *prompt);
 int main_menu(void);
-int add_directory(struct AppState *state);
 int process_dir(struct AppState *state, char *path);
 char *push_dir_path(struct Stack *stack, char *parent, char *path);
 void browse(struct AppState *state);
@@ -59,20 +64,33 @@ int main(int argc, char **argv)
     state.strings = stack_init(MB(1));
     state.videos = dynarr_init(sizeof(struct Video), MB(1));
 
+    // TODO:
+    // - Load any previously saved data
+    load_state(&state);
+
     while (1) {
         clear_screen();
         int choice = main_menu();
         switch (choice) {
             case SEARCH:
-                break;
+            {
+            } break;
+
             case BROWSE:
+            {
                 browse(&state);
-                break;
+            } break;
+
             case DIRADD:
-                add_directory(&state);
-                break;
+            {
+                if (add_directory(&state) == 0)
+                    save_state(&state);
+            } break;
+
             case QUIT:
+            {
                 goto EXIT;
+            }
         }
     }
 
@@ -93,6 +111,21 @@ EXIT:
  */
 int get_input(char *buf, size_t len)
 {
+    // TODO: Convert this to be a safe dynamic read
+    // - `len` optional or removed?
+    // * Warn users that the returned pointer should be considered volatile
+    // - Start with a buffered read
+    // - If buffer proves too small
+    //   - use dynamic allocation
+    //   - copy buffer to new alloc
+    //   - read into buffer
+    //   - concatenate to new alloc
+    //   - until newline found
+    //     - any chars remaining in buffer after newline should be moved
+    //       to the front of the buffer
+    //     - the next buffered read should start from where it left off
+    //     - only reading enough to once again fill the buffer
+    //       and continue as usual
     i32 status = -1;
 
     fgets(buf, len, stdin);
@@ -230,8 +263,7 @@ int main_menu(void)
  */
 int add_directory(struct AppState *state)
 {
-    // TODO: Make this dynamic
-    char path_buffer[256];
+    char path_buffer[MAX_STR_LEN];
     u32 path_len;
 
     do {
@@ -435,4 +467,102 @@ void browse(struct AppState *state)
                 break;
         }
     }
+}
+
+/*
+ * Returns:
+ * 0: Success
+ * 1: Failed to open file for reading
+ */
+int load_state(struct AppState *state)
+{
+    FILE *datafile = fopen(DATAFILE, "r");
+    if (!datafile)
+        return 1;
+
+    struct DynArr *videos = &state->videos;
+
+    int num_videos;
+    fscanf(datafile, "%d\n", &num_videos);
+
+    // TODO:
+    // - For count num_videos
+    //   - Create new Video struct
+    //   - Push filepath string
+    //   - Store pointer
+    //   - If exists, push title string
+    //   - Store pointer
+    //   - If exists, store year
+    //   - If exists, store duration
+
+    for (int i = 0; i < num_videos; i++) {
+        struct Video current = {};
+
+        char read_string[MAX_STR_LEN];
+        int read_string_len;
+
+        // TODO: Adapt get_input() to take file handle
+        // - See its todo
+
+        // Read Filepath
+        fgets(read_string, MAX_STR_LEN, datafile);
+        read_string_len = strlen(read_string);
+        // Remove the '\n' but let `read_string_len` include the NUL byte
+        read_string[read_string_len - 1] = '\0';
+
+        current.filepath = stack_push(&state->strings, read_string_len);
+        strncpy(current.filepath, read_string, read_string_len);
+
+        // Read Title
+        fgets(read_string, MAX_STR_LEN, datafile);
+        read_string_len = strlen(read_string);
+        read_string[read_string_len - 1] = '\0';
+        if (strcmp(read_string, "(null)") != 0) {
+            current.title = stack_push(&state->strings, read_string_len);
+            strncpy(current.title, read_string, read_string_len);
+        }
+
+        // Read Year
+        fscanf(datafile, "%hd\n", &current.year);
+
+        // Read Duration
+        fscanf(datafile, "%hd\n", &current.duration);
+
+        dynarr_add(videos, &current);
+    }
+
+    fclose(datafile);
+
+    return 0;
+}
+
+/*
+ * Returns:
+ * 0: Success
+ * 1: Failed to open file for writing
+ */
+int save_state(struct AppState *state)
+{
+    // TODO:
+    // - First store in a temporary file
+    // - On successful write:
+    //   - Rename new file to overwrite old
+    FILE *datafile = fopen(DATAFILE, "w");
+    if (!datafile)
+        return 1;
+
+    struct DynArr videos = state->videos;
+    struct Video *video;
+
+    fprintf(datafile, "%d\n", videos.size);
+    DYN_FOR_EACH(&videos, video) {
+        fprintf(datafile, "%s\n", video->filepath);
+        fprintf(datafile, "%s\n", video->title);
+        fprintf(datafile, "%d\n", video->year);
+        fprintf(datafile, "%d\n", video->duration);
+    }
+
+    fclose(datafile);
+
+    return 0;
 }

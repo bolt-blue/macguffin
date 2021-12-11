@@ -25,4 +25,8 @@ struct AppState {
     struct DynArr videos;       // Array of struct Video
 };
 
+int load_state(struct AppState *state);
+int save_state(struct AppState *state);
+int add_directory(struct AppState *state);
+
 #endif /* MACGUFFIN_H */
