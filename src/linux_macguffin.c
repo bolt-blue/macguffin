@@ -31,8 +31,6 @@
 // TODO: Store these in a config file
 #define DATADIR "data/"
 #define DATAFILE DATADIR "store"
-// TODO: Make this dynamic
-#define MAX_STR_LEN 256
 
 // TODO:
 // - Print error message function
@@ -42,7 +40,7 @@
 //   - show main menu
 // - Separate out CLI functions
 // - Separate out non-platform-specific code
-internal int get_input(char *buf, size_t len);
+internal char *get_line(FILE *stream);
 void print_menu(char *title, char *message, char *options[], int opt_len, int width);
 internal char await_user(char *prompt);
 int main_menu(void);
@@ -64,8 +62,6 @@ int main(int argc, char **argv)
     state.strings = stack_init(MB(1));
     state.videos = dynarr_init(sizeof(struct Video), MB(1));
 
-    // TODO:
-    // - Load any previously saved data
     load_state(&state);
 
     while (1) {
@@ -96,7 +92,6 @@ int main(int argc, char **argv)
 
 EXIT:
     // Clean up
-    // TODO: Save strings to persistent storage
     dynarr_free(&state.videos);
     stack_free(&state.strings);
     clear_screen();
@@ -105,58 +100,69 @@ EXIT:
 }
 
 /*
+ * Read a whole line from stream
+ *
+ * Only stops at a newline char. The newline char is replaced with a nul byte.
+ * If line length exceeds the buffer size, the buffer is dynamically
+ * (re-)allocated; this will repeat until the buffer is large enough.
+ *
+ * Warning: The memory for the returned pointer will be overwritten by
+ * subsequent calls. Safe copying is left to the caller.
+ *
  * Returns:
- *  i: Success; length of input read
- * -1: Failure; newline not found
+ *     *: Success
+ *  NULL: Failure. Something went wrong
+ *
+ * TODO:
+ * - Be more clear about errors - use errno
+ * - Have some sensible max buffer length, in case no newline is present in
+ *   e.g. a stream of many gigabytes
  */
-int get_input(char *buf, size_t len)
+#define DEFAULT_BUFSZ 256
+#define SENTINEL 0x2  // ASCII STX - Start of Text character
+char *get_line(FILE *stream)
 {
-    // TODO: Convert this to be a safe dynamic read
-    // - `len` optional or removed?
-    // * Warn users that the returned pointer should be considered volatile
-    // - Start with a buffered read
-    // - If buffer proves too small
-    //   - use dynamic allocation
-    //   - copy buffer to new alloc
-    //   - read into buffer
-    //   - concatenate to new alloc
-    //   - until newline found
-    //     - any chars remaining in buffer after newline should be moved
-    //       to the front of the buffer
-    //     - the next buffered read should start from where it left off
-    //     - only reading enough to once again fill the buffer
-    //       and continue as usual
-    i32 status = -1;
+    // TODO:
+    // - Start immediately with a dynamically alloc'd buffer ?
+    static char default_buffer[DEFAULT_BUFSZ];
+    static char *buf = default_buffer;
+    static int len = DEFAULT_BUFSZ;
+    static int pos = 0;
+    static char using_default = 1;
 
-    fgets(buf, len, stdin);
-
-    // If newline found in input, replace with nul and declare as clean
-    for (int i = 0; i < len; i++) {
-        if (buf[i] == '\n') {
-            buf[i] = '\0';
-            status = i;
-            break;
+    while (1) {
+        // Enable differentiation between error and EOF
+        buf[pos] = SENTINEL;
+        if (!fgets(buf + pos, len - pos, stream) && buf[pos] == SENTINEL) {
+            // fgets failed
+            return NULL;
         }
-    }
 
-    // If unclean, clear whatever remains in stdin buffer
-    if (status == -1) {
-        u8 cleared = 0;
-        do {
-            char tmp[64];
-            char *cur = tmp;
-            fgets(tmp, 64, stdin);
-            while (*cur) {
-                if (*cur == '\n' || *cur == EOF) {
-                    cleared = 1;
-                    break;
-                }
-                cur++;
+        for (; pos < len; pos++) {
+            if (buf[pos] == '\n') {
+                buf[pos] = '\0';
+                goto CLEANUP;
             }
-        } while (!cleared);
+        }
+
+        len *= 2;
+        if (!using_default) {
+            buf = realloc(buf, len);
+        } else {
+            char *newbuf = malloc(len);
+            memcpy(newbuf, buf, len / 2);
+            buf = newbuf;
+            using_default = 0;
+        }
+        if (!buf)
+            return NULL;
+        // Step back one, to account for the nul byte introduced by fgets
+        pos -= 1;
     }
 
-    return status;
+CLEANUP:
+    pos = 0;
+    return buf;
 }
 
 /*
@@ -219,17 +225,13 @@ int main_menu(void)
     int num_options = sizeof(options) / sizeof(char *);
     print_menu("MAIN MENU", NULL, options, num_options, MENU_HEAD_W);
 
-#define INPUTSZ 3
-    // NOTE: Our input size must include space for newline and nul chars
-    // even though any newline shall be converted to nul by get_input()
-    // TODO: Need a more clean approach to the above - feels hacky
-    char input[INPUTSZ];
+    char *input;
     enum CHOICE choice;
     u8 invalid = 0;
     while (1) {
         printf("> ");
 
-        get_input(input, INPUTSZ);
+        input = get_line(stdin);
 
         char *cur = input;
         while (*cur) {
@@ -258,13 +260,12 @@ int main_menu(void)
 /*
  * Return:
  *   0: Success
- *  -1: Path too long for buffer
+ *  -1: Error reading input
  *  -2: Failure during processing
  */
 int add_directory(struct AppState *state)
 {
-    char path_buffer[MAX_STR_LEN];
-    u32 path_len;
+    char *path_buffer;
 
     do {
         clear_screen();
@@ -273,14 +274,16 @@ int add_directory(struct AppState *state)
         print_menu("Add Directory", "Enter full path", NULL, 0, MENU_HEAD_W);
         printf("> ");
 
-        if ((path_len = get_input(path_buffer, sizeof(path_buffer))) == -1) {
-            printf("Path length exceeded the buffer size. Aborting\n");
+        if (!(path_buffer = get_line(stdin))) {
+            printf("Error on reading input. Aborting\n");
             return -1;
         }
-    } while (path_len == 0);
+    // NOTE: Passing an empty string to opendir() (via process_dir()) gets
+    // intepreted (wrongly, imo) as `/`. So we make sure that the buffer
+    // contains some text
+    } while (!*path_buffer);
 
     // TODO: Only process directories that are not already being tracked
-    // NOTE: Passing an empty string gets (wrongly, imo) interpreted as `/`
     if (process_dir(state, path_buffer) == -1)
         return -2;
 
@@ -498,25 +501,20 @@ int load_state(struct AppState *state)
     for (int i = 0; i < num_videos; i++) {
         struct Video current = {};
 
-        char read_string[MAX_STR_LEN];
+        char *read_string;
         int read_string_len;
 
-        // TODO: Adapt get_input() to take file handle
-        // - See its todo
-
         // Read Filepath
-        fgets(read_string, MAX_STR_LEN, datafile);
-        read_string_len = strlen(read_string);
-        // Remove the '\n' but let `read_string_len` include the NUL byte
-        read_string[read_string_len - 1] = '\0';
+        read_string = get_line(datafile);
+        // Include the nul byte
+        read_string_len = strlen(read_string) + 1;
 
         current.filepath = stack_push(&state->strings, read_string_len);
         strncpy(current.filepath, read_string, read_string_len);
 
         // Read Title
-        fgets(read_string, MAX_STR_LEN, datafile);
-        read_string_len = strlen(read_string);
-        read_string[read_string_len - 1] = '\0';
+        read_string = get_line(datafile);
+        read_string_len = strlen(read_string) + 1;
         if (strcmp(read_string, "(null)") != 0) {
             current.title = stack_push(&state->strings, read_string_len);
             strncpy(current.title, read_string, read_string_len);
