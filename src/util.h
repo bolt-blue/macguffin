@@ -24,8 +24,14 @@ typedef uint32_t u32;
         fprintf(stderr, "[ASSERTION] (%s:%d:%s)\n", __FILE__, __LINE__, __func__); \
         *(volatile int *)0 = 0; \
     }
+#define DEBUG_PRINT(msg) \
+    fprintf(stdout, "[DEBUG] " msg)
+#define DEBUG_PRINTF(msg, ...) \
+    fprintf(stdout, "[DEBUG] " msg, __VA_ARGS__)
 #else
 #define ASSERT(exp)
+#define DEBUG_PRINT(msg)
+#define DEBUG_PRINTF(msg, ...)
 #endif
 
 #define KB(v) ((v) * 1024)

@@ -383,13 +383,13 @@ int process_dir(struct AppState *state, char *path)
 
     // @debug
     if (video_files->size) {
-        printf("[DEBUG] Currently tracked files:\n");
+        DEBUG_PRINT("Currently tracked files:\n");
         for (int i = 0; i < video_files->size; i++) {
             struct Video *video = (struct Video *)dynarr_at(video_files, i);
-            printf("\t%s\n", video->filepath);
+            DEBUG_PRINTF("\t%s\n", video->filepath);
         }
-        printf("[DEBUG] End of files\n");
-        printf("[DEBUG] Tracking %d files\n", video_files->size);
+        DEBUG_PRINT("End of files\n");
+        DEBUG_PRINTF("Tracking %d files\n", video_files->size);
     }
 
     await_user("Press any key to continue...\n");
