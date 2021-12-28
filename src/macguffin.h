@@ -12,6 +12,11 @@ enum CHOICE {
     QUIT
 };
 
+struct RootDir {
+    char *path;
+    struct DynArr videos;
+};
+
 struct Video {
     char *filepath;
     char *title;
@@ -21,8 +26,8 @@ struct Video {
 };
 
 struct AppState {
-    struct Stack strings;       // Raw video file paths [could hold other ?]
-    struct DynArr videos;       // Array of struct Video
+    struct Stack strings;       // Raw strings; directory and file paths, etc
+    struct DynArr tracked_dirs; // Tracked Directories and their Videos
 };
 
 int load_state(struct AppState *state);

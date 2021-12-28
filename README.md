@@ -18,8 +18,8 @@ _From the all-knowing Wiki of Pedia_
 - [x] Detect mp4 files
 - [ ] Detect mkv files
 - [ ] Detect other video formats
-- [ ] Retain info about tracked directories
-- [ ] Track content from multiple directories
+- [x] Retain info about tracked directories
+- [x] Track content from multiple directories
 - [ ] View and edit metadata
 - [ ] Immediate mode GUI
 - [ ] Search filters

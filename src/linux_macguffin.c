@@ -1,9 +1,9 @@
 // TODO: CLI mode (can add GUI later)
 // - Platform-dependent setup
-// - Take one or more input directories
 // - Recursively find all video files
 //   - valid types: mkv, mp4, m4v, mpg, mpeg, avi, VIDEO_TS(?)
 // - Store file paths relative to input path(s)
+// - Prevent tracking the same directories more than once
 // - Read metadata
 //   - 
 // - Write any changes to metadata
@@ -60,7 +60,7 @@ int main(int argc, char **argv)
     // - Handle sub-allocations ourselves
     struct AppState state;
     state.strings = stack_init(MB(1));
-    state.videos = dynarr_init(sizeof(struct Video), MB(1));
+    state.tracked_dirs = dynarr_init(sizeof(struct RootDir), KB(4));
 
     load_state(&state);
 
@@ -92,7 +92,7 @@ int main(int argc, char **argv)
 
 EXIT:
     // Clean up
-    dynarr_free(&state.videos);
+    dynarr_free(&state.tracked_dirs);
     stack_free(&state.strings);
     clear_screen();
 
@@ -354,8 +354,21 @@ int process_dir(struct AppState *state, char *path)
         closedir(current_dir);
     }
 
+    // TODO: Properly store all tracked directories
+    // - Retain `path`
+    // - Store all sub-paths relative to path ?
+    struct RootDir new_root;
+
+    // Retain path distinctly in our strings array
+    u32 path_len = strlen(path) + 1;
+    new_root.path = stack_push(&state->strings, path_len);
+    strncpy(new_root.path, path, path_len);
+
+    // TODO: First determine number of video files, and allocate only as much
+    // memory as necessary
+    new_root.videos = dynarr_init(sizeof(struct Video), KB(16));
+
     struct Stack *strings = &state->strings;
-    struct DynArr *video_files = &state->videos;
     char *potential;
 
     while ((potential = stack_pop(&potentials))) {
@@ -373,24 +386,35 @@ int process_dir(struct AppState *state, char *path)
             struct Video video = {0};
             video.filepath = stack_push(strings, filepath_len);
             strncpy(video.filepath, potential, filepath_len);
-            dynarr_add(video_files, &video);
+            dynarr_add(&new_root.videos, &video);
         }
     }
+
+    // Update state with newly tracked directory
+    dynarr_add(&state->tracked_dirs, &new_root);
 
     // Clean up temporary data
     stack_free(&potentials);
     stack_free(&dirs);
 
+#ifndef NDEBUG
     // @debug
-    if (video_files->size) {
+    if (state->tracked_dirs.size) {
+        u32 num_tracked = 0;
         DEBUG_PRINT("Currently tracked files:\n");
-        for (int i = 0; i < video_files->size; i++) {
-            struct Video *video = (struct Video *)dynarr_at(video_files, i);
-            DEBUG_PRINTF("\t%s\n", video->filepath);
+        for (int i = 0; i < state->tracked_dirs.size; i++) {
+            struct RootDir cur_dir = *(struct RootDir *)dynarr_at(&state->tracked_dirs, i);
+            DEBUG_PRINTF("\tRoot Directory: %s\n", cur_dir.path);
+            num_tracked += cur_dir.videos.size;
+            for (int j = 0; j < cur_dir.videos.size; j++) {
+                struct Video *video = (struct Video *)dynarr_at(&cur_dir.videos, j);
+                DEBUG_PRINTF("\t\t%s\n", video->filepath);
+            }
         }
         DEBUG_PRINT("End of files\n");
-        DEBUG_PRINTF("Tracking %d files\n", video_files->size);
+        DEBUG_PRINTF("Tracking %d files\n", num_tracked);
     }
+#endif
 
     await_user("Press any key to continue...\n");
 
@@ -430,17 +454,21 @@ char *push_dir_path(struct Stack *stack, char *parent, char *path)
 
 void browse(struct AppState *state)
 {
-    u32 cur = 0;
-    struct DynArr videos = state->videos;
-
-    if (!videos.size)
+    struct DynArr tracked = state->tracked_dirs;
+    if (!tracked.size)
         return;
 
+    u32 r_id = 0;
+    u32 v_id = 0;
     u8 running = 1;
+
+    struct DynArr videos = ((struct RootDir *)dynarr_at(&tracked, r_id))->videos;
+
     while(running) {
         clear_screen();
 
-        struct Video *v = dynarr_at(&videos, cur);
+        struct Video *v = dynarr_at(&videos, v_id);
+
         printf("q: Main menu\n\n");
         printf("Title: %s\n", v->title);
         printf("Year: %d\n", v->year);
@@ -453,17 +481,29 @@ void browse(struct AppState *state)
         switch (key) {
             case 'a':
             case 'h':
-                if (cur > 0)
-                    cur--;
-                else
-                    cur = videos.size - 1;
+                if (v_id > 0) {
+                    v_id--;
+                } else {
+                    if (r_id > 0)
+                        r_id--;
+                    else
+                        r_id = tracked.size - 1;
+                    videos = ((struct RootDir *)dynarr_at(&tracked, r_id))->videos;
+                    v_id = videos.size - 1;
+                }
                 break;
             case 'd':
             case 'l':
-                if (cur < videos.size - 1)
-                    cur++;
-                else
-                    cur = 0;
+                if (v_id < videos.size - 1) {
+                    v_id++;
+                } else {
+                    if (r_id < tracked.size - 1)
+                        r_id++;
+                    else
+                        r_id = 0;
+                    videos = ((struct RootDir *)dynarr_at(&tracked, r_id))->videos;
+                    v_id = 0;
+                }
                 break;
             case 'q':
                 running = 0;
@@ -483,50 +523,75 @@ int load_state(struct AppState *state)
     if (!datafile)
         return 1;
 
-    struct DynArr *videos = &state->videos;
-
-    int num_videos;
-    fscanf(datafile, "%d\n", &num_videos);
-
     // TODO:
-    // - For count num_videos
-    //   - Create new Video struct
-    //   - Push filepath string
+    // - For count num tracked directories
+    //   - Create new RootDir struct
+    //   - Push directory path string
     //   - Store pointer
-    //   - If exists, push title string
-    //   - Store pointer
-    //   - If exists, store year
-    //   - If exists, store duration
+    //   - Allocate dynarr memory for videos
+    //   - For count num_videos
+    //     - Create new Video struct
+    //     - Push filepath string
+    //     - Store pointer
+    //     - If exists, push title string
+    //     - Store pointer
+    //     - If exists, store year
+    //     - If exists, store duration
 
-    for (int i = 0; i < num_videos; i++) {
-        struct Video current = {};
+    int num_tracked;
+    fscanf(datafile, "%d\n", &num_tracked);
 
-        char *read_string;
-        int read_string_len;
+    char *read_buf;
+    int read_buf_len;
 
-        // Read Filepath
-        read_string = get_line(datafile);
+    for (int i = 0; i < num_tracked; i++) {
+        struct RootDir cur_root = {};
+        int num_videos;
+
+        // Read root directory path
+        read_buf = get_line(datafile);
         // Include the nul byte
-        read_string_len = strlen(read_string) + 1;
+        read_buf_len = strlen(read_buf) + 1;
 
-        current.filepath = stack_push(&state->strings, read_string_len);
-        strncpy(current.filepath, read_string, read_string_len);
+        // Read video count for this directory
+        fscanf(datafile, "%d\n", &num_videos);
 
-        // Read Title
-        read_string = get_line(datafile);
-        read_string_len = strlen(read_string) + 1;
-        if (strcmp(read_string, "(null)") != 0) {
-            current.title = stack_push(&state->strings, read_string_len);
-            strncpy(current.title, read_string, read_string_len);
+        // Store directory path
+        // TODO: We're doing this enough times; separate out to own function
+        cur_root.path = stack_push(&state->strings, read_buf_len);
+        strncpy(cur_root.path, read_buf, read_buf_len);
+
+        // Prepare for video data storage
+        // We can allocate only the memory needed for now
+        cur_root.videos = dynarr_init(sizeof(struct Video), num_videos);
+
+        for (int i = 0; i < num_videos; i++) {
+            struct Video cur_vid = {};
+
+            // Read Filepath
+            read_buf = get_line(datafile);
+            read_buf_len = strlen(read_buf) + 1;
+
+            cur_vid.filepath = stack_push(&state->strings, read_buf_len);
+            strncpy(cur_vid.filepath, read_buf, read_buf_len);
+
+            // Read Title
+            read_buf = get_line(datafile);
+            read_buf_len = strlen(read_buf) + 1;
+            if (strcmp(read_buf, "(null)") != 0) {
+                cur_vid.title = stack_push(&state->strings, read_buf_len);
+                strncpy(cur_vid.title, read_buf, read_buf_len);
+            }
+
+            // Read Year
+            fscanf(datafile, "%hd\n", &cur_vid.year);
+
+            // Read Duration
+            fscanf(datafile, "%hd\n", &cur_vid.duration);
+
+            dynarr_add(&cur_root.videos, &cur_vid);
         }
-
-        // Read Year
-        fscanf(datafile, "%hd\n", &current.year);
-
-        // Read Duration
-        fscanf(datafile, "%hd\n", &current.duration);
-
-        dynarr_add(videos, &current);
+        dynarr_add(&state->tracked_dirs, &cur_root);
     }
 
     fclose(datafile);
@@ -549,15 +614,23 @@ int save_state(struct AppState *state)
     if (!datafile)
         return 1;
 
-    struct DynArr videos = state->videos;
-    struct Video *video;
+    struct DynArr tracked = state->tracked_dirs;
+    struct RootDir *cur_root;
 
-    fprintf(datafile, "%d\n", videos.size);
-    DYN_FOR_EACH(&videos, video) {
-        fprintf(datafile, "%s\n", video->filepath);
-        fprintf(datafile, "%s\n", video->title);
-        fprintf(datafile, "%d\n", video->year);
-        fprintf(datafile, "%d\n", video->duration);
+    fprintf(datafile, "%d\n", tracked.size);
+    DYN_FOR_EACH(&tracked, cur_root) {
+        struct DynArr videos = cur_root->videos;
+        struct Video *video;
+
+        fprintf(datafile, "%s\n", cur_root->path);
+        fprintf(datafile, "%d\n", videos.size);
+
+        DYN_FOR_EACH(&videos, video) {
+            fprintf(datafile, "%s\n", video->filepath);
+            fprintf(datafile, "%s\n", video->title);
+            fprintf(datafile, "%d\n", video->year);
+            fprintf(datafile, "%d\n", video->duration);
+        }
     }
 
     fclose(datafile);
