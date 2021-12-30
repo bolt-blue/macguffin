@@ -4,6 +4,7 @@
 
 #include "dynarr.h"
 #include "stack.h"
+#include "tag.h"
 
 enum CHOICE {
     SEARCH = 0x1,
@@ -12,9 +13,19 @@ enum CHOICE {
     QUIT
 };
 
+/*
+ * NOTE: This should almost certainly only be passed by pointer
+ */
+struct AppState {
+    struct Stack scratch;       // Temporary data; volatile
+    struct Stack strings;       // Raw strings; directory and file paths, etc
+    struct DynArr tracked_dirs; // Array of struct RootDir
+    struct TagHash tags;        // Hash table of struct Tag
+};
+
 struct RootDir {
     char *path;
-    struct DynArr videos;
+    struct DynArr videos;       // Array of struct Video
 };
 
 struct Video {
@@ -22,13 +33,10 @@ struct Video {
     char *title;
     u16 year;                   // Full year e.g. 1984
     u16 duration;               // In seconds (max. 18.2 hours)
-    struct DynArr tags;         // TODO: Do we store this here?
+    struct DynArr tags;         // Array of struct Tag ID's only
 };
 
-struct AppState {
-    struct Stack strings;       // Raw strings; directory and file paths, etc
-    struct DynArr tracked_dirs; // Tracked Directories and their Videos
-};
+#define DEFAULT_TAG_AMT 8
 
 int load_state(struct AppState *state);
 int save_state(struct AppState *state);
