@@ -214,8 +214,8 @@ char await_user(char *prompt)
     // - When enabled (default), reads will wait for 'Enter' keypress
     // - When disabled, reads will process immediately
 
-    // Enable immediate read from stdin
-    ttystate.c_lflag &= ~ICANON;
+    // Enable immediate read from stdin and disable keypress echo
+    ttystate.c_lflag &= ~ICANON & ~ECHO;
     // Read after single byte received
     ttystate.c_cc[VMIN] = 1;
     // Update terminal attributes
@@ -225,7 +225,7 @@ char await_user(char *prompt)
     char key = fgetc(stdin);
 
     // Reset to default behaviour
-    ttystate.c_lflag |= ICANON;
+    ttystate.c_lflag |= ICANON | ECHO;
     tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
     return key;
 }
@@ -270,32 +270,42 @@ int main_menu(void)
  * Return:
  *   0: Success
  *  -1: Error reading input
- *  -2: Failure during processing
+ *  -2: Cancelled
+ *  -3: Failure during processing
+ * TODO: We currently never have a failure state during processing
+ * - Do we need one?
+ *   - Determine and fix as necessary
  */
 int add_directory(struct AppState *state)
 {
+    clear_screen();
+
+    // TODO: Tab completion (not so trivial... ?)
+    print_menu("Add Directory", "Enter full path, or an empty line to cancel", NULL, 0, MENU_HEAD_W);
+
     char *path_buffer;
-
-    do {
-        clear_screen();
-
-        // TODO: Tab completion (not so trivial... ?)
-        print_menu("Add Directory", "Enter full path", NULL, 0, MENU_HEAD_W);
+    while (1) {
         printf("> ");
+        path_buffer = get_line(stdin);
 
-        if (!(path_buffer = get_line(stdin))) {
-            printf("Error on reading input. Aborting\n");
+        // NOTE: Passing an empty string to opendir() (via process_dir()) gets
+        // intepreted (wrongly, imo) as `/`. So we make sure that the buffer
+        // contains some text
+        if (!path_buffer)
             return -1;
+        else if (!*path_buffer)
+            return -2;
+
+        // TODO: Only process directories that are not already being tracked
+        u32 res = process_dir(state, path_buffer);
+        if (res == 0) {
+            break;
+        } else if (res == -1) {
+            // TODO: @logging
+            perror("Failed");
+            await_user("Press any key to try again\n");
         }
-    // NOTE: Passing an empty string to opendir() (via process_dir()) gets
-    // intepreted (wrongly, imo) as `/`. So we make sure that the buffer
-    // contains some text
-    } while (!*path_buffer);
-
-    // TODO: Only process directories that are not already being tracked
-    if (process_dir(state, path_buffer) == -1)
-        return -2;
-
+    }
     return 0;
 }
 
@@ -309,6 +319,10 @@ int process_dir(struct AppState *state, char *path)
     // TODO:
     // - Store all video files (of supported filetype(s))
     //   - only .mp4 and .mkv initially
+
+    if (!opendir(path)) {
+        return -1;
+    }
 
     // NOTE: Stack is limited in size
     // TODO: When full, batch process and clear before re-populating?
@@ -332,7 +346,7 @@ int process_dir(struct AppState *state, char *path)
         DIR *current_dir = opendir(current_dir_path);
         if (!current_dir) {
             // TODO: @logging
-            perror("Failed to open directory path");
+            perror("Failed to open directory path. Continuing.");
             fprintf(stderr, "%s\n", current_dir_path);
             continue;
         }
