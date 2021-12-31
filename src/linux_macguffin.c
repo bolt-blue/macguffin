@@ -100,6 +100,18 @@ int main(int argc, char **argv)
 
 EXIT:
     // Clean up
+    {
+        // TODO: Maybe only do this during development ?
+        struct RootDir *dir;
+        DYN_FOR_EACH(&state.tracked_dirs, dir) {
+            struct Video *vid;
+            DYN_FOR_EACH(&dir->videos, vid) {
+                if (vid->tags.base)
+                    dynarr_free(&vid->tags);
+            }
+            dynarr_free(&dir->videos);
+        }
+    }
     taghash_free(&state.tags);
     dynarr_free(&state.tracked_dirs);
     stack_free(&state.strings);
@@ -740,6 +752,7 @@ int load_state(struct AppState *state)
         cur_root.videos = dynarr_init(sizeof(struct Video), num_videos);
 
         for (int i = 0; i < num_videos; i++) {
+            // Important to initialise this to zero's
             struct Video cur_vid = {};
 
             // Read Filepath
