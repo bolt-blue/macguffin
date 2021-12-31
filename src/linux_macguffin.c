@@ -33,26 +33,26 @@
 #define DATAFILE DATADIR "store"
 
 // TODO:
-// - Print error message function
+// - Print error message function ?
 //   - clear screen
 //   - print message
 //   - await keypress
 //   - show main menu
-// - Separate out CLI functions
 // - Separate out non-platform-specific code
+
+// TODO: The following are all CLI-only functions
+// - Separate out when beginning work on GUI version
+internal int main_menu(void);
+
+internal i32 get_int(u32 lo, u32 hi, char *prompt);
 internal char *get_input(char *prompt);
-i32 get_int(u32 lo, u32 hi, char *prompt);
 internal char *get_line(FILE *stream);
-void print_menu(char *title, char *message, char *options[], int opt_len, int width);
 internal char await_user(char *prompt);
-int main_menu(void);
-int process_dir(struct AppState *state, char *path);
-char *push_dir_path(struct Stack *stack, char *parent, char *path);
-void browse(struct AppState *state);
-void add_tags(struct AppState *state, struct Video *v);
-void remove_tags(struct AppState *state, struct Video *v);
-void create_tags(struct AppState *state, struct Video *v);
+
+internal void print_menu(char *title, char *message, char *options[], int opt_len, int width);
 internal void print_tags(struct TagHash *tag_table, struct Video *v);
+
+/* ========================================================================== */
 
 int main(int argc, char **argv)
 {
@@ -121,167 +121,6 @@ EXIT:
     return 0;
 }
 
-char *get_input(char *prompt)
-{
-    if (!prompt) prompt = "> ";
-    printf("%s", prompt);
-    return get_line(stdin);
-}
-
-/*
- * NOTE: Currently only really suitable for positive integer ranges
- * Return:
- * Success: Positive int in range lo to hi, inclusive
- * Abort:   -1 (no input)
- */
-i32 get_int(u32 lo, u32 hi, char *prompt)
-{
-    char *input;
-    u32 choice;
-    while (1) {
-PROMPT:
-        input = get_input(prompt);
-        if (!input || !*input)
-            return -1;
-
-        char *cur = input;
-        while (*cur) {
-            if (!isdigit(*cur)) {
-                printf("Invalid input. Please try again\n");
-                goto PROMPT;
-            }
-            cur++;
-        }
-
-        choice = atoi(input);
-        if (choice >= lo && choice <= hi)
-            break;
-        else
-            printf("Invalid option. Please try again\n");
-    }
-    return choice;
-}
-
-/*
- * Read a whole line from stream
- *
- * Only stops at a newline char. The newline char is replaced with a nul byte.
- * If line length exceeds the buffer size, the buffer is dynamically
- * (re-)allocated; this will repeat until the buffer is large enough.
- *
- * Warning: The memory for the returned pointer will be overwritten by
- * subsequent calls. Safe copying is left to the caller.
- *
- * Returns:
- *     *: Success
- *  NULL: Failure. Something went wrong
- *
- * TODO:
- * - Be more clear about errors - use errno
- * - Have some sensible max buffer length, in case no newline is present in
- *   e.g. a stream of many gigabytes
- */
-#define DEFAULT_BUFSZ 256
-#define SENTINEL 0x2  // ASCII STX - Start of Text character
-char *get_line(FILE *stream)
-{
-    // TODO:
-    // - Start immediately with a dynamically alloc'd buffer ?
-    static char default_buffer[DEFAULT_BUFSZ];
-    static char *buf = default_buffer;
-    static int len = DEFAULT_BUFSZ;
-    static int pos = 0;
-    static char using_default = 1;
-
-    while (1) {
-        // Enable differentiation between error and EOF
-        buf[pos] = SENTINEL;
-        if (!fgets(buf + pos, len - pos, stream) && buf[pos] == SENTINEL) {
-            // fgets failed
-            return NULL;
-        }
-
-        for (; pos < len; pos++) {
-            if (buf[pos] == '\n') {
-                buf[pos] = '\0';
-                goto CLEANUP;
-            }
-        }
-
-        len *= 2;
-        if (!using_default) {
-            buf = realloc(buf, len);
-        } else {
-            char *newbuf = malloc(len);
-            memcpy(newbuf, buf, len / 2);
-            buf = newbuf;
-            using_default = 0;
-        }
-        if (!buf)
-            return NULL;
-        // Step back one, to account for the nul byte introduced by fgets
-        pos -= 1;
-    }
-
-CLEANUP:
-    pos = 0;
-    return buf;
-}
-
-/*
- * Parameters:
- *   title:   menu header [required]
- *   message: subtitle/message prompt [optional]
- *   options: list of string choices [optional]
- *   opt_len: length of options array
- *   width:   used to determine width of menu header [optional]
- * Warning: Expects title and message to be nul-terminated
- */
-void print_menu(char *title, char *message, char *options[], int opt_len, int width)
-{
-    static const char *divider = "========================================";
-    if (!width)
-        width = 80;
-    int title_len = strlen(title);
-    int div_len = width - title_len - 2;
-
-    printf("%.*s %s %.*s\n", div_len, divider, title, div_len, divider);
-
-    if (message)
-        printf("%s\n", message);
-
-    if (options) {
-        for (int i = 0; i < opt_len; i++) {
-            printf("%d. %s\n", i + 1, options[i]);
-        }
-    }
-}
-
-char await_user(char *prompt)
-{
-    struct termios ttystate;
-    tcgetattr(STDIN_FILENO, &ttystate);
-
-    // NOTE: Canonical mode
-    // - When enabled (default), reads will wait for 'Enter' keypress
-    // - When disabled, reads will process immediately
-
-    // Enable immediate read from stdin and disable keypress echo
-    ttystate.c_lflag &= ~ICANON & ~ECHO;
-    // Read after single byte received
-    ttystate.c_cc[VMIN] = 1;
-    // Update terminal attributes
-    tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
-
-    if (prompt) printf("%s", prompt);
-    char key = fgetc(stdin);
-
-    // Reset to default behaviour
-    ttystate.c_lflag |= ICANON | ECHO;
-    tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
-    return key;
-}
-
 int main_menu(void)
 {
     char *options[] = {"Search", "Browse", "Add directory", "Quit"};
@@ -293,6 +132,8 @@ int main_menu(void)
 
     return choice;
 }
+
+/* ========================================================================== */
 
 /*
  * Return:
@@ -336,6 +177,189 @@ int add_directory(struct AppState *state)
     }
     return 0;
 }
+
+void browse(struct AppState *state)
+{
+    struct DynArr tracked = state->tracked_dirs;
+    if (!tracked.size)
+        return;
+
+    u32 r_id = 0;
+    u32 v_id = 0;
+    u8 running = 1;
+
+    struct DynArr videos = ((struct RootDir *)dynarr_at(&tracked, r_id))->videos;
+
+    while(running) {
+        clear_screen();
+
+        struct Video *v = dynarr_at(&videos, v_id);
+
+        printf("Title: %s\n", v->title);
+        printf("Year: %d\n", v->year);
+        printf("Duration: %d\n", v->duration);
+        printf("Filepath: %s\n", v->filepath);
+
+        printf("Tags: ");
+        print_tags(&state->tags, v);
+        printf("\n");
+
+        printf("<-- | -->\n");
+        printf("a/h | d/l\n\n");
+        printf( "t: Add tag(s) | r: Remove tag(s) | c: Create new tag(s) | "
+               "q: Main menu\n");
+
+        unsigned char key = await_user(NULL);
+        switch (key) {
+        case 'a': // fall through
+        case 'h': {
+            if (v_id > 0) {
+                v_id--;
+            } else {
+                if (r_id > 0)
+                    r_id--;
+                else
+                    r_id = tracked.size - 1;
+                videos = ((struct RootDir *)dynarr_at(&tracked, r_id))->videos;
+                v_id = videos.size - 1;
+            }
+        } break;
+
+        case 'd': // fall through
+        case 'l': {
+            if (v_id < videos.size - 1) {
+                v_id++;
+            } else {
+                if (r_id < tracked.size - 1)
+                    r_id++;
+                else
+                    r_id = 0;
+                videos = ((struct RootDir *)dynarr_at(&tracked, r_id))->videos;
+                v_id = 0;
+            }
+        } break;
+
+        case 't': {
+            add_tags(state, v);
+        } break;
+
+        case 'r': {
+            remove_tags(state, v);
+        } break;
+
+        case 'c': {
+            create_tags(state, v);
+        } break;
+
+        case 'q': {
+            running = 0;
+        } break;
+        }
+    }
+}
+
+/* ========================================================================== */
+
+void add_tag(tagid_t tid, struct Video *v)
+{
+    if (!v->tags.base) {
+        // First tag for this video
+        v->tags = dynarr_init(sizeof(tagid_t), DEFAULT_TAG_AMT);
+    }
+    dynarr_add(&v->tags, &tid);
+}
+
+void add_tags(struct AppState *state, struct Video *v)
+{
+    // TODO:
+    // - Use the menu choice to get correct tag id from the array
+    // - Add tag id to this video
+    u32 tag_count = state->tags.count;
+    tagid_t *tag_ids = stack_push(&state->scratch, sizeof(tagid_t) * tag_count);
+    char **tag_texts = stack_push(&state->scratch, sizeof(char *) * tag_count);
+    {
+        // Copy all available tags into a plain array
+        u32 i = 0;
+        tagnode_t *node;
+        TH_FOR_EACH(&state->tags, node) {
+            tag_ids[i] = node->tag.id;
+            tag_texts[i] = node->tag.text;
+            i++;
+        }
+
+        // Create a volatile copy of the video tags
+        u32 vtag_count = v->tags.size;
+        tagid_t vtag_ids[vtag_count];
+        for (u32 i = 0; i < vtag_count; i++) {
+            vtag_ids[i] = *(tagid_t*)dynarr_at(&v->tags, i);
+        }
+        // Remove any tags that this video already has
+        for (u32 i = 0; i < tag_count; i++) {
+            for (u32 j = 0; j < vtag_count; j++) {
+                if (vtag_ids[j] == tag_ids[i]) {
+                    // Swap out and decrement
+                    if (i < tag_count - 1) {
+                        tag_ids[i] = tag_ids[tag_count-1];
+                        tag_texts[i] = tag_texts[tag_count-1];
+                    }
+                    tag_count--;
+                    // Don't need to use this vtag in future checks
+                    if (j < vtag_count - 1)
+                        vtag_ids[j] = vtag_ids[vtag_count-1];
+                    vtag_count--;
+                    // Step back to check swapped value next
+                    i--;
+                    j--;
+                    break;
+                }
+            }
+        }
+    }
+
+    printf("\n");
+    if (tag_count) {
+        print_menu("AVAILABLE TAGS", NULL, tag_texts, tag_count, MENU_HEAD_W);
+        u32 choice = get_int(1, tag_count, NULL);
+        if (choice != -1)
+            add_tag(tag_ids[choice-1], v);
+    } else {
+        printf("No tags available\n");
+        await_user("Press any key to continue...\n");
+    }
+}
+
+void remove_tags(struct AppState *state, struct Video *v)
+{
+    // TODO:
+    // - List tags currently associated with this video, /numbered/
+    // - User selects number; remove tag id from v
+    // - Loop until "break signal" from user
+}
+
+void create_tags(struct AppState *state, struct Video *v)
+{
+    // TODO: Clean this mess up!
+    printf("\n");
+    printf("Create a new tag and add it to the current video.\n");
+    printf("Input nothing to return\n");
+    char *input;
+    while ((input = get_input("Tag> ")) && *input) {
+        struct Tag tmp;
+        if (!taghash_find_by_text(&state->tags, input, &tmp)) {
+            // Make sure we have a permanent copy of the tag
+            u32 input_len = strlen(input) + 1;
+            char *tag_text = (char *)stack_push(&state->strings, input_len);
+            strncpy(tag_text, input, input_len);
+            tmp.id = taghash_insert(&state->tags, tag_text);
+            fprintf(stdout, "Created tag '%s'\n", tag_text);
+        } else{
+            fprintf(stdout, "[INFO] Tag already exists.\n");
+        }
+        add_tag(tmp.id, v);
+    }
+}
+
+/* ========================================================================== */
 
 /*
  * Return:
@@ -503,182 +527,168 @@ char *push_dir_path(struct Stack *stack, char *parent, char *path)
     return pushed;
 }
 
-void browse(struct AppState *state)
+/* ========================================================================== */
+
+/*
+ * NOTE: Currently only really suitable for positive integer ranges
+ * Return:
+ * Success: Positive int in range lo to hi, inclusive
+ * Abort:   -1 (no input)
+ */
+i32 get_int(u32 lo, u32 hi, char *prompt)
 {
-    struct DynArr tracked = state->tracked_dirs;
-    if (!tracked.size)
-        return;
-
-    u32 r_id = 0;
-    u32 v_id = 0;
-    u8 running = 1;
-
-    struct DynArr videos = ((struct RootDir *)dynarr_at(&tracked, r_id))->videos;
-
-    while(running) {
-        clear_screen();
-
-        struct Video *v = dynarr_at(&videos, v_id);
-
-        printf("Title: %s\n", v->title);
-        printf("Year: %d\n", v->year);
-        printf("Duration: %d\n", v->duration);
-        printf("Filepath: %s\n", v->filepath);
-
-        printf("Tags: ");
-        print_tags(&state->tags, v);
-        printf("\n");
-
-        printf("<-- | -->\n");
-        printf("a/h | d/l\n\n");
-        printf( "t: Add tag(s) | r: Remove tag(s) | c: Create new tag(s) | "
-               "q: Main menu\n");
-
-        unsigned char key = await_user(NULL);
-        switch (key) {
-        case 'a': // fall through
-        case 'h': {
-            if (v_id > 0) {
-                v_id--;
-            } else {
-                if (r_id > 0)
-                    r_id--;
-                else
-                    r_id = tracked.size - 1;
-                videos = ((struct RootDir *)dynarr_at(&tracked, r_id))->videos;
-                v_id = videos.size - 1;
-            }
-        } break;
-
-        case 'd': // fall through
-        case 'l': {
-            if (v_id < videos.size - 1) {
-                v_id++;
-            } else {
-                if (r_id < tracked.size - 1)
-                    r_id++;
-                else
-                    r_id = 0;
-                videos = ((struct RootDir *)dynarr_at(&tracked, r_id))->videos;
-                v_id = 0;
-            }
-        } break;
-
-        case 't': {
-            add_tags(state, v);
-        } break;
-
-        case 'r': {
-            remove_tags(state, v);
-        } break;
-
-        case 'c': {
-            create_tags(state, v);
-        } break;
-
-        case 'q': {
-            running = 0;
-        } break;
-        }
-    }
-}
-
-void add_tag(tagid_t tid, struct Video *v)
-{
-    if (!v->tags.base) {
-        // First tag for this video
-        v->tags = dynarr_init(sizeof(tagid_t), DEFAULT_TAG_AMT);
-    }
-    dynarr_add(&v->tags, &tid);
-}
-
-void add_tags(struct AppState *state, struct Video *v)
-{
-    // TODO:
-    // - Use the menu choice to get correct tag id from the array
-    // - Add tag id to this video
-    u32 tag_count = state->tags.count;
-    tagid_t *tag_ids = stack_push(&state->scratch, sizeof(tagid_t) * tag_count);
-    char **tag_texts = stack_push(&state->scratch, sizeof(char *) * tag_count);
-    {
-        // Copy all available tags into a plain array
-        u32 i = 0;
-        tagnode_t *node;
-        TH_FOR_EACH(&state->tags, node) {
-            tag_ids[i] = node->tag.id;
-            tag_texts[i] = node->tag.text;
-            i++;
-        }
-
-        // Create a volatile copy of the video tags
-        u32 vtag_count = v->tags.size;
-        tagid_t vtag_ids[vtag_count];
-        for (u32 i = 0; i < vtag_count; i++) {
-            vtag_ids[i] = *(tagid_t*)dynarr_at(&v->tags, i);
-        }
-        // Remove any tags that this video already has
-        for (u32 i = 0; i < tag_count; i++) {
-            for (u32 j = 0; j < vtag_count; j++) {
-                if (vtag_ids[j] == tag_ids[i]) {
-                    // Swap out and decrement
-                    if (i < tag_count - 1) {
-                        tag_ids[i] = tag_ids[tag_count-1];
-                        tag_texts[i] = tag_texts[tag_count-1];
-                    }
-                    tag_count--;
-                    // Don't need to use this vtag in future checks
-                    if (j < vtag_count - 1)
-                        vtag_ids[j] = vtag_ids[vtag_count-1];
-                    vtag_count--;
-                    // Step back to check swapped value next
-                    i--;
-                    j--;
-                    break;
-                }
-            }
-        }
-    }
-
-    printf("\n");
-    if (tag_count) {
-        print_menu("AVAILABLE TAGS", NULL, tag_texts, tag_count, MENU_HEAD_W);
-        u32 choice = get_int(1, tag_count, NULL);
-        if (choice != -1)
-            add_tag(tag_ids[choice-1], v);
-    } else {
-        printf("No tags available\n");
-        await_user("Press any key to continue...\n");
-    }
-}
-
-void remove_tags(struct AppState *state, struct Video *v)
-{
-    // TODO:
-    // - List tags currently associated with this video, /numbered/
-    // - User selects number; remove tag id from v
-    // - Loop until "break signal" from user
-}
-
-void create_tags(struct AppState *state, struct Video *v)
-{
-    // TODO: Clean this mess up!
-    printf("\n");
-    printf("Create a new tag and add it to the current video.\n");
-    printf("Input nothing to return\n");
     char *input;
-    while ((input = get_input("Tag> ")) && *input) {
-        struct Tag tmp;
-        if (!taghash_find_by_text(&state->tags, input, &tmp)) {
-            // Make sure we have a permanent copy of the tag
-            u32 input_len = strlen(input) + 1;
-            char *tag_text = (char *)stack_push(&state->strings, input_len);
-            strncpy(tag_text, input, input_len);
-            tmp.id = taghash_insert(&state->tags, tag_text);
-            fprintf(stdout, "Created tag '%s'\n", tag_text);
-        } else{
-            fprintf(stdout, "[INFO] Tag already exists.\n");
+    u32 choice;
+    while (1) {
+PROMPT:
+        input = get_input(prompt);
+        if (!input || !*input)
+            return -1;
+
+        char *cur = input;
+        while (*cur) {
+            if (!isdigit(*cur)) {
+                printf("Invalid input. Please try again\n");
+                goto PROMPT;
+            }
+            cur++;
         }
-        add_tag(tmp.id, v);
+
+        choice = atoi(input);
+        if (choice >= lo && choice <= hi)
+            break;
+        else
+            printf("Invalid option. Please try again\n");
+    }
+    return choice;
+}
+
+char *get_input(char *prompt)
+{
+    if (!prompt) prompt = "> ";
+    printf("%s", prompt);
+    return get_line(stdin);
+}
+
+/*
+ * Read a whole line from stream
+ *
+ * Only stops at a newline char. The newline char is replaced with a nul byte.
+ * If line length exceeds the buffer size, the buffer is dynamically
+ * (re-)allocated; this will repeat until the buffer is large enough.
+ *
+ * Warning: The memory for the returned pointer will be overwritten by
+ * subsequent calls. Safe copying is left to the caller.
+ *
+ * Returns:
+ *     *: Success
+ *  NULL: Failure. Something went wrong
+ *
+ * TODO:
+ * - Be more clear about errors - use errno
+ * - Have some sensible max buffer length, in case no newline is present in
+ *   e.g. a stream of many gigabytes
+ */
+#define DEFAULT_BUFSZ 256
+#define SENTINEL 0x2  // ASCII STX - Start of Text character
+char *get_line(FILE *stream)
+{
+    // TODO:
+    // - Start immediately with a dynamically alloc'd buffer ?
+    static char default_buffer[DEFAULT_BUFSZ];
+    static char *buf = default_buffer;
+    static int len = DEFAULT_BUFSZ;
+    static int pos = 0;
+    static char using_default = 1;
+
+    while (1) {
+        // Enable differentiation between error and EOF
+        buf[pos] = SENTINEL;
+        if (!fgets(buf + pos, len - pos, stream) && buf[pos] == SENTINEL) {
+            // fgets failed
+            return NULL;
+        }
+
+        for (; pos < len; pos++) {
+            if (buf[pos] == '\n') {
+                buf[pos] = '\0';
+                goto CLEANUP;
+            }
+        }
+
+        len *= 2;
+        if (!using_default) {
+            buf = realloc(buf, len);
+        } else {
+            char *newbuf = malloc(len);
+            memcpy(newbuf, buf, len / 2);
+            buf = newbuf;
+            using_default = 0;
+        }
+        if (!buf)
+            return NULL;
+        // Step back one, to account for the nul byte introduced by fgets
+        pos -= 1;
+    }
+
+CLEANUP:
+    pos = 0;
+    return buf;
+}
+
+char await_user(char *prompt)
+{
+    struct termios ttystate;
+    tcgetattr(STDIN_FILENO, &ttystate);
+
+    // NOTE: Canonical mode
+    // - When enabled (default), reads will wait for 'Enter' keypress
+    // - When disabled, reads will process immediately
+
+    // Enable immediate read from stdin and disable keypress echo
+    ttystate.c_lflag &= ~ICANON & ~ECHO;
+    // Read after single byte received
+    ttystate.c_cc[VMIN] = 1;
+    // Update terminal attributes
+    tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
+
+    if (prompt) printf("%s", prompt);
+    char key = fgetc(stdin);
+
+    // Reset to default behaviour
+    ttystate.c_lflag |= ICANON | ECHO;
+    tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
+    return key;
+}
+
+/* ========================================================================== */
+
+/*
+ * Parameters:
+ *   title:   menu header [required]
+ *   message: subtitle/message prompt [optional]
+ *   options: list of string choices [optional]
+ *   opt_len: length of options array
+ *   width:   used to determine width of menu header [optional]
+ * Warning: Expects title and message to be nul-terminated
+ */
+void print_menu(char *title, char *message, char *options[], int opt_len, int width)
+{
+    static const char *divider = "========================================";
+    if (!width)
+        width = 80;
+    int title_len = strlen(title);
+    int div_len = width - title_len - 2;
+
+    printf("%.*s %s %.*s\n", div_len, divider, title, div_len, divider);
+
+    if (message)
+        printf("%s\n", message);
+
+    if (options) {
+        for (int i = 0; i < opt_len; i++) {
+            printf("%d. %s\n", i + 1, options[i]);
+        }
     }
 }
 
@@ -697,6 +707,8 @@ void print_tags(struct TagHash *tag_table, struct Video *v)
     }
     printf("\n");
 }
+
+/* ========================================================================== */
 
 /*
  * Returns:

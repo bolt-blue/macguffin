@@ -6,6 +6,8 @@
 #include "stack.h"
 #include "tag.h"
 
+/* ========================================================================== */
+
 enum CHOICE {
     SEARCH = 0x1,
     BROWSE,
@@ -38,8 +40,26 @@ struct Video {
 
 #define DEFAULT_TAG_AMT 8
 
+/* ========================================================================== */
+
+/*
+ * Core function prototypes
+ * All of these must be provided by each platform-specific layer
+ * WARNING: Subject to change during alpha
+ */
+
 int load_state(struct AppState *state);
 int save_state(struct AppState *state);
+
 int add_directory(struct AppState *state);
+void browse(struct AppState *state);
+
+void add_tag(tagid_t tid, struct Video *v);
+void add_tags(struct AppState *state, struct Video *v);
+void remove_tags(struct AppState *state, struct Video *v);
+void create_tags(struct AppState *state, struct Video *v);
+
+int process_dir(struct AppState *state, char *path);
+char *push_dir_path(struct Stack *stack, char *parent, char *path);
 
 #endif /* MACGUFFIN_H */
