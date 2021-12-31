@@ -14,6 +14,7 @@ struct TagHash taghash_init(uint32_t size)
     struct TagHash new;
     new.base = calloc(size, sizeof(tagnode_t *));
     new.size = size;
+    new.count = 0;
     return new;
 }
 
@@ -58,6 +59,7 @@ tagid_t taghash_insert(struct TagHash *table, char *tag_text)
     node->next = table->base[bucket];
     table->base[bucket] = node;
 
+    table->count++;
     return tid;
 }
 
@@ -68,7 +70,7 @@ tagid_t taghash_insert(struct TagHash *table, char *tag_text)
  * 1: Found
  * 0: Not found
  */
-u8 taghash_find_id(const struct TagHash *table, const tagid_t tid, struct Tag *t_out)
+u8 taghash_find_by_id(const struct TagHash *table, const tagid_t tid, struct Tag *t_out)
 {
     u32 bucket = hash_to_bucket(tid, table->size);
     tagnode_t *cur = table->base[bucket];
@@ -86,10 +88,10 @@ u8 taghash_find_id(const struct TagHash *table, const tagid_t tid, struct Tag *t
 /*
  * Wrapper around `taghash_find_id()`
  */
-u8 taghash_find_text(const struct TagHash *table, const char *text, struct Tag *t_out)
+u8 taghash_find_by_text(const struct TagHash *table, const char *text, struct Tag *t_out)
 {
     tagid_t tid = hash_djb2(text);
-    return taghash_find_id(table, tid, t_out);
+    return taghash_find_by_id(table, tid, t_out);
 }
 
 /*

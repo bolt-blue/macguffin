@@ -41,6 +41,7 @@
 // - Separate out CLI functions
 // - Separate out non-platform-specific code
 internal char *get_input(char *prompt);
+i32 get_int(u32 lo, u32 hi, char *prompt);
 internal char *get_line(FILE *stream);
 void print_menu(char *title, char *message, char *options[], int opt_len, int width);
 internal char await_user(char *prompt);
@@ -48,7 +49,9 @@ int main_menu(void);
 int process_dir(struct AppState *state, char *path);
 char *push_dir_path(struct Stack *stack, char *parent, char *path);
 void browse(struct AppState *state);
-void edit_tags(struct AppState *state, struct Video *v);
+void add_tags(struct AppState *state, struct Video *v);
+void remove_tags(struct AppState *state, struct Video *v);
+void create_tags(struct AppState *state, struct Video *v);
 internal void print_tags(struct TagHash *tag_table, struct Video *v);
 
 int main(int argc, char **argv)
@@ -62,6 +65,7 @@ int main(int argc, char **argv)
     // TODO: Have only one syscall allocation for the whole process
     // - Handle sub-allocations ourselves
     struct AppState state;
+    state.scratch = stack_init(MB(1));
     state.strings = stack_init(MB(1));
     state.tracked_dirs = dynarr_init(sizeof(struct RootDir), KB(4));
     state.tags = taghash_init(KB(4));
@@ -96,8 +100,10 @@ int main(int argc, char **argv)
 
 EXIT:
     // Clean up
+    taghash_free(&state.tags);
     dynarr_free(&state.tracked_dirs);
     stack_free(&state.strings);
+    stack_free(&state.scratch);
     clear_screen();
 
     return 0;
@@ -108,6 +114,40 @@ char *get_input(char *prompt)
     if (!prompt) prompt = "> ";
     printf("%s", prompt);
     return get_line(stdin);
+}
+
+/*
+ * NOTE: Currently only really suitable for positive integer ranges
+ * Return:
+ * Success: Positive int in range lo to hi, inclusive
+ * Abort:   -1 (no input)
+ */
+i32 get_int(u32 lo, u32 hi, char *prompt)
+{
+    char *input;
+    u32 choice;
+    while (1) {
+PROMPT:
+        input = get_input(prompt);
+        if (!input || !*input)
+            return -1;
+
+        char *cur = input;
+        while (*cur) {
+            if (!isdigit(*cur)) {
+                printf("Invalid input. Please try again\n");
+                goto PROMPT;
+            }
+            cur++;
+        }
+
+        choice = atoi(input);
+        if (choice >= lo && choice <= hi)
+            break;
+        else
+            printf("Invalid option. Please try again\n");
+    }
+    return choice;
 }
 
 /*
@@ -236,32 +276,8 @@ int main_menu(void)
     int num_options = sizeof(options) / sizeof(char *);
     print_menu("MAIN MENU", NULL, options, num_options, MENU_HEAD_W);
 
-    char *input;
     enum CHOICE choice;
-    u8 invalid = 0;
-    while (1) {
-        input = get_input(NULL);
-
-        char *cur = input;
-        while (*cur) {
-            if (!isdigit(*cur++)) {
-                invalid = 1;
-                break;
-            }
-        }
-
-        if (invalid) {
-            printf("Invalid input. Please try again\n");
-            invalid = 0;
-            continue;
-        }
-
-        choice = atoi(input);
-        if (choice > 0 && choice < 5)
-            break;
-        else
-            printf("Please choose one of the available options.\n");
-    };
+    choice = get_int(1, 4, NULL);
 
     return choice;
 }
@@ -503,7 +519,8 @@ void browse(struct AppState *state)
 
         printf("<-- | -->\n");
         printf("a/h | d/l\n\n");
-        printf("q: Main menu | t: Edit tags\n");
+        printf( "t: Add tag(s) | r: Remove tag(s) | c: Create new tag(s) | "
+               "q: Main menu\n");
 
         unsigned char key = await_user(NULL);
         switch (key) {
@@ -536,7 +553,15 @@ void browse(struct AppState *state)
         } break;
 
         case 't': {
-            edit_tags(state, v);
+            add_tags(state, v);
+        } break;
+
+        case 'r': {
+            remove_tags(state, v);
+        } break;
+
+        case 'c': {
+            create_tags(state, v);
         } break;
 
         case 'q': {
@@ -546,71 +571,102 @@ void browse(struct AppState *state)
     }
 }
 
-void edit_tags(struct AppState *state, struct Video *v)
+void add_tag(tagid_t tid, struct Video *v)
 {
-    u8 running = 1;
-    while (running) {
-        clear_screen();
+    if (!v->tags.base) {
+        // First tag for this video
+        v->tags = dynarr_init(sizeof(tagid_t), DEFAULT_TAG_AMT);
+    }
+    dynarr_add(&v->tags, &tid);
+}
 
-        if (v->title)
-            printf("Title: %s\n\n", v->title);
-        else
-            printf("Path: %s\n\n", v->filepath);
-        print_tags(&state->tags, v);
-
-        unsigned char key = await_user("a: Add tag(s) | r: Remove tag(s) | "
-                                       "c: Create new tag(s) | q: Return");
-        switch (key) {
-        case 'a': {
-            // TODO:
-            // - Build a dynamic array from all available tags
-            // - Remove any that this video already has
-            // - Print the array as a menu
-            // - Use the menu choice to get correct tag id from the array
-            // - Add tag id to this video
-            // - Loop until "break signal" from user
-        } break;
-
-        case 'r': {
-            // TODO:
-            // - List tags currently associated with this video, /numbered/
-            // - User selects number; remove tag id from v
-            // - Loop until "break signal" from user
-        } break;
-
-        case 'c': {
-            // TODO: Clean this mess up!
-            // - Separate out to own function ?
-            clear_screen();
-            printf("Create a new tag and add it to the current video.\n");
-            printf("Input nothing to return\n");
-            char *input;
-            while ((input = get_input("Tag> ")) && *input) {
-                DEBUG_PRINTF("Adding tag: %s\n", input);
-                struct Tag tmp;
-                if (!taghash_find_text(&state->tags, input, &tmp)) {
-                    // Make sure we have a permanent copy of the tag
-                    u32 input_len = strlen(input) + 1;
-                    char *tag_text = (char *)stack_push(&state->strings, input_len);
-                    strncpy(tag_text, input, input_len);
-                    tmp.id = taghash_insert(&state->tags, tag_text);
-                    fprintf(stdout, "Created tag '%s'\n", tag_text);
-                } else{
-                    fprintf(stdout, "[INFO] Tag already exists.\n");
-                }
-                if (!v->tags.base) {
-                    // First tag for this video
-                    v->tags = dynarr_init(sizeof(tagid_t), DEFAULT_TAG_AMT);
-                }
-                dynarr_add(&v->tags, &tmp.id);
-                await_user("Press any key to continue");
-            }
-        } break;
-
-        case 'q': {
-            running = 0;
-        } break;
+void add_tags(struct AppState *state, struct Video *v)
+{
+    // TODO:
+    // - Use the menu choice to get correct tag id from the array
+    // - Add tag id to this video
+    u32 tag_count = state->tags.count;
+    tagid_t *tag_ids = stack_push(&state->scratch, sizeof(tagid_t) * tag_count);
+    char **tag_texts = stack_push(&state->scratch, sizeof(char *) * tag_count);
+    {
+        // Copy all available tags into a plain array
+        u32 i = 0;
+        tagnode_t *node;
+        TH_FOR_EACH(&state->tags, node) {
+            tag_ids[i] = node->tag.id;
+            tag_texts[i] = node->tag.text;
+            i++;
         }
+
+        // Create a volatile copy of the video tags
+        u32 vtag_count = v->tags.size;
+        tagid_t vtag_ids[vtag_count];
+        for (u32 i = 0; i < vtag_count; i++) {
+            vtag_ids[i] = *(tagid_t*)dynarr_at(&v->tags, i);
+        }
+        // Remove any tags that this video already has
+        for (u32 i = 0; i < tag_count; i++) {
+            for (u32 j = 0; j < vtag_count; j++) {
+                if (vtag_ids[j] == tag_ids[i]) {
+                    // Swap out and decrement
+                    if (i < tag_count - 1) {
+                        tag_ids[i] = tag_ids[tag_count-1];
+                        tag_texts[i] = tag_texts[tag_count-1];
+                    }
+                    tag_count--;
+                    // Don't need to use this vtag in future checks
+                    if (j < vtag_count - 1)
+                        vtag_ids[j] = vtag_ids[vtag_count-1];
+                    vtag_count--;
+                    // Step back to check swapped value next
+                    i--;
+                    j--;
+                    break;
+                }
+            }
+        }
+    }
+
+    printf("\n");
+    if (tag_count) {
+        print_menu("AVAILABLE TAGS", NULL, tag_texts, tag_count, MENU_HEAD_W);
+        u32 choice = get_int(1, tag_count, NULL);
+        if (choice != -1)
+            add_tag(tag_ids[choice-1], v);
+    } else {
+        printf("No tags available\n");
+        await_user("Press any key to continue...\n");
+    }
+}
+
+void remove_tags(struct AppState *state, struct Video *v)
+{
+    // TODO:
+    // - List tags currently associated with this video, /numbered/
+    // - User selects number; remove tag id from v
+    // - Loop until "break signal" from user
+}
+
+void create_tags(struct AppState *state, struct Video *v)
+{
+    // TODO: Clean this mess up!
+    printf("\n");
+    printf("Create a new tag and add it to the current video.\n");
+    printf("Input nothing to return\n");
+    char *input;
+    while ((input = get_input("Tag> ")) && *input) {
+        struct Tag tmp;
+        if (!taghash_find_by_text(&state->tags, input, &tmp)) {
+            // Make sure we have a permanent copy of the tag
+            u32 input_len = strlen(input) + 1;
+            char *tag_text = (char *)stack_push(&state->strings, input_len);
+            strncpy(tag_text, input, input_len);
+            tmp.id = taghash_insert(&state->tags, tag_text);
+            fprintf(stdout, "Created tag '%s'\n", tag_text);
+        } else{
+            fprintf(stdout, "[INFO] Tag already exists.\n");
+        }
+        add_tag(tmp.id, v);
     }
 }
 
@@ -620,7 +676,7 @@ void print_tags(struct TagHash *tag_table, struct Video *v)
         struct Tag t;
         char *tag_text;
         tagid_t tid = *(tagid_t *)dynarr_at(&v->tags, i);
-        if (taghash_find_id(tag_table, tid, &t))
+        if (taghash_find_by_id(tag_table, tid, &t))
             tag_text = t.text;
         else
             // This should never happen!
