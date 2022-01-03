@@ -4,7 +4,7 @@ APP = macguffin
 SOURCES = $(wildcard src/*.c)
 OBJECTS = $(patsubst %.c, %.o, $(SOURCES))
 
-all: $(APP)
+all: $(APP) compdb tags types
 
 $(APP): $(OBJECTS)
 	$(CC) $(CFLAGS) $(OBJECTS) -o $@
@@ -21,15 +21,22 @@ clean:
 	rm -f $(DEPS)
 	rm -f $(APP)
  
-TYPES = src/types.vim
-.PHONY: tags $(TYPES)
-tags:
+TYPES = types.vim
+tags: $(OBJECTS)
 	ctags -R
 
 # NOTE: For types to have any benefit, you would need the appropriate config
 # in your .vimrc for the keyword 'DevType'
 types: $(TYPES)
-$(TYPES):
-	ctags -R --languages=c++ --kinds-c=gstud -o- |\
+$(TYPES): $(OBJECTS)
+	@echo "Re-building custom types"
+	@ctags -R --languages=c++ --kinds-c=gstud -o- |\
 		awk 'BEGIN{printf("syntax keyword DevType\t")}\
 			{printf("%s ", $$1)}END{print ""}' > $@
+
+# REF: https://pypi.org/project/compiledb/
+.PHONY: compdb
+compdb: compile_commands.json
+
+compile_commands.json: Makefile
+	make -Bnwk | compiledb

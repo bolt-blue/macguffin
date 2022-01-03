@@ -14,6 +14,7 @@ meaningless device for a name.
 _From the all-knowing Wiki of Pedia_
 
 ## TODO
+
 - [x] Process directory to be tracked
 - [x] Detect mp4 files
 - [ ] Detect mkv files
@@ -24,3 +25,8 @@ _From the all-knowing Wiki of Pedia_
 - [ ] Immediate mode GUI
 - [ ] Search filters
 - [ ] Fetch subtitles from the internet
+
+## Dependencies
+
+Optional:
+- `compiledb`: Used by the Makefile. Remove if you don't have or want it
