@@ -1,32 +1,11 @@
-# MacGuffin
+# Give Up GitHub
 
-## Description
-A film browser for your local system.  
-**Very much a work in progress - currently only CLI**
+This project has given up GitHub.  ([See Software Freedom Conservancy's *Give Up  GitHub* site for details](https://GiveUpGitHub.org).)
 
-### A note on naming
-Everything seems to need some stupid name these days.
-So, what better for a film related piece of code, than to have an otherwise
-meaningless device for a name.
+You can now find this project at [Codeberg](https://codeberg.org/bolt/macguffin) instead.
 
-> In fiction, a MacGuffin (sometimes McGuffin) is an object, device, or event that is necessary to the plot and the motivation of the characters, but insignificant, unimportant, or irrelevant in itself.
+Any use of this project's code by GitHub Copilot, past or present, is done without our permission.  We do not consent to GitHub's use of this project's code in Copilot.
 
-_From the all-knowing Wiki of Pedia_
+Join us; you can [give up GitHub](https://GiveUpGitHub.org) too!
 
-## TODO
-
-- [x] Process directory to be tracked
-- [x] Detect mp4 files
-- [ ] Detect mkv files
-- [ ] Detect other video formats
-- [x] Retain info about tracked directories
-- [x] Track content from multiple directories
-- [ ] View and edit metadata
-- [ ] Immediate mode GUI
-- [ ] Search filters
-- [ ] Fetch subtitles from the internet
-
-## Dependencies
-
-Optional:
-- `compiledb`: Used by the Makefile. Remove if you don't have or want it
+![Logo of the GiveUpGitHub campaign](https://sfconservancy.org/img/GiveUpGitHub.png)
